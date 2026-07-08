@@ -14,13 +14,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { requireCurrentUser } from "@/server/auth/session"
-import { store } from "@/server/repositories/store"
+import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import type { ImportJob, Template } from "@/lib/types"
 
 export default async function DashboardPage() {
   const user = await requireCurrentUser()
-  const imports = store.listImports(user.id)
-  const templates = store.listTemplates(user.id)
+
+  const [importsData, templatesData] = await Promise.all([
+    serverFetch<{ imports: ImportJob[] }>("/imports"),
+    serverFetch<{ templates: Template[] }>("/templates"),
+  ])
+
+  const imports = importsData.imports
+  const templates = templatesData.templates
   const summary = imports.reduce(
     (totals, job) => ({
       good_count: totals.good_count + job.good_count,

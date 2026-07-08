@@ -26,6 +26,7 @@ import {
   type ChartCustomizerState,
 } from "@/components/chart-customizer-sidebar"
 import { Button } from "@/components/ui/button"
+import { api } from "@/lib/api-client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { SavedRow } from "@/lib/types"
 
@@ -50,10 +51,17 @@ export function ChartBuilder({ rows }: { rows: SavedRow[] }) {
   const data = useMemo(() => buildChartData(rows, state.xAxis), [rows, state.xAxis])
 
   async function suggestChart() {
-    const response = await fetch("/api/analytics/suggest-chart", {
+    const importId = rows[0]?.import_id
+
+    if (!importId) {
+      toast.error("No saved rows available for chart suggestions.")
+      return
+    }
+
+    const response = await api("/analytics/suggest-chart", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ import_id: rows[0]?.import_id ?? "imp_demo", columns, filters: {} }),
+      body: JSON.stringify({ import_id: importId, columns, filters: {} }),
     })
     const payload = (await response.json()) as {
       suggestion?: {

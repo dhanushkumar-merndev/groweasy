@@ -3,6 +3,7 @@ import { fromNodeHeaders } from "better-auth/node"
 
 import { auth, isAuthConfigured } from "../server/auth/auth.js"
 import { demoUserId } from "../lib/data/sample-data.js"
+import { logger } from "../lib/logger.js"
 
 export type CurrentUser = {
   id: string
@@ -14,6 +15,7 @@ export type CurrentUser = {
 
 export async function requireCurrentUser(req: Request): Promise<CurrentUser> {
   if (!isAuthConfigured()) {
+    logger.info("Auth not configured, using demo user")
     return {
       id: demoUserId,
       name: "Demo User",
@@ -30,9 +32,11 @@ export async function requireCurrentUser(req: Request): Promise<CurrentUser> {
     .catch(() => null)
 
   if (!session?.user?.id) {
+    logger.warn({ url: req.url }, "No valid session found")
     throw new Error("UNAUTHORIZED")
   }
 
+  logger.info({ userId: session.user.id }, "User authenticated")
   return {
     id: session.user.id,
     name: session.user.name ?? "User",

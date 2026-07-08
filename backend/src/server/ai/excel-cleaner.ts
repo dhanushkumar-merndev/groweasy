@@ -9,6 +9,7 @@ import {
 import { cacheKeys, getCache, setCache } from "../redis/cache.js"
 import { store } from "../repositories/store.js"
 import { summarizeCleanedRows } from "../imports/summary.js"
+import { logger } from "../../lib/logger.js"
 
 const primaryModel = process.env.PRIMARY_AI_MODEL ?? "openai/gpt-oss-120b"
 const fallbackModel = process.env.FALLBACK_AI_MODEL ?? "llama-3.3-70b-versatile"
@@ -34,6 +35,8 @@ export async function processImportRows(input: {
   const allRows: CleanedRow[] = []
   let modelUsed = groq ? primaryModel : "demo-local-cleaner"
 
+  logger.info({ importId: input.importId, totalRows: input.rows.length, batchSize, totalBatches: rowBatches.length }, "Starting AI processing")
+
   await store.addHistory(input.userId, input.importId, "ai_processing_started", {
     total_rows: input.rows.length,
     prompt_version: EXCEL_CLEANER_PROMPT_VERSION,
@@ -41,8 +44,10 @@ export async function processImportRows(input: {
 
   for (const [batchIndex, rows] of rowBatches.entries()) {
     const batchNo = batchIndex + 1
+    logger.info({ importId: input.importId, batchNo, batchRows: rows.length, model: modelUsed }, "Processing batch")
     const cleanedRows = groq
       ? await cleanWithGroq({ groq, rows, template: input.template, batchNo }).catch(async () => {
+          logger.warn({ batchNo, fallbackModel }, "Groq call failed, falling back to deterministic cleaning")
           modelUsed = fallbackModel
           return cleanRowsWithTemplate(rows, input.template)
         })
@@ -61,6 +66,7 @@ export async function processImportRows(input: {
       },
     }
 
+    logger.info({ batchNo, summary: batchResult.summary }, "Batch completed")
     batches.push(batchResult)
     await setCache(cacheKeys(input.importId).batch(batchNo), batchResult)
   }
@@ -89,6 +95,8 @@ export async function processImportRows(input: {
     ai_changed_count: summary.ai_changed_count,
   })
 
+  logger.info({ importId: input.importId, summary, modelUsed }, "AI processing completed")
+
   return {
     rows: allRows,
     batches,
@@ -97,7 +105,13 @@ export async function processImportRows(input: {
 }
 
 export async function getProcessedRows(importId: string, updatedAt?: string) {
-  return (await getCache<CleanedRow[]>(cacheKeys(importId).formatted, updatedAt)) ?? store.listCleanedRows(importId)
+  const cached = await getCache<CleanedRow[]>(cacheKeys(importId).formatted, updatedAt)
+  if (cached) {
+    logger.debug({ importId }, "Returning cached processed rows")
+    return cached
+  }
+  logger.debug({ importId }, "Cache miss for processed rows, falling back to store")
+  return store.listCleanedRows(importId)
 }
 
 async function cleanWithGroq(input: {
@@ -115,8 +129,10 @@ async function cleanWithGroq(input: {
   })
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const model = attempt === 0 ? primaryModel : fallbackModel
+    logger.debug({ batchNo: input.batchNo, attempt, model }, "Calling Groq API")
     const response = await input.groq.chat.completions.create({
-      model: attempt === 0 ? primaryModel : fallbackModel,
+      model,
       temperature: 0.1,
       response_format: { type: "json_object" },
       messages: [
@@ -127,16 +143,19 @@ async function cleanWithGroq(input: {
     const content = response.choices[0]?.message?.content
 
     if (!content) {
+      logger.warn({ batchNo: input.batchNo, attempt }, "Groq returned empty content, retrying")
       continue
     }
 
     const parsed = parseGroqRows(content, localRows)
 
     if (parsed) {
+      logger.debug({ batchNo: input.batchNo, attempt, model }, "Groq response parsed successfully")
       return parsed
     }
   }
 
+  logger.warn({ batchNo: input.batchNo }, "All Groq retries exhausted, using local fallback")
   return localRows
 }
 
@@ -145,6 +164,7 @@ function parseGroqRows(content: string, fallbackRows: CleanedRow[]) {
     const parsed = JSON.parse(content) as { rows?: CleanedRow[] }
 
     if (!Array.isArray(parsed.rows)) {
+      logger.warn("Groq response missing rows array")
       return null
     }
 
@@ -158,6 +178,7 @@ function parseGroqRows(content: string, fallbackRows: CleanedRow[]) {
       ai_changes: row.ai_changes ?? [],
     }))
   } catch {
+    logger.warn("Failed to parse Groq JSON response")
     return null
   }
 }

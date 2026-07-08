@@ -2,6 +2,7 @@ import * as XLSX from "xlsx"
 
 import { sanitizeCellValue } from "../../lib/formatting.js"
 import type { ImportSheet, RawImportRow, RowData, ValidationResult, ValidationWarning } from "../../lib/types.js"
+import { logger } from "../../lib/logger.js"
 
 type ParseOptions = {
   importId: string
@@ -26,6 +27,8 @@ export function parseWorkbook(buffer: ArrayBuffer, options: ParseOptions): Valid
   let formulaLikeCells = 0
   let blankSheets = 0
 
+  logger.info({ importId: options.importId, sheetCount: workbook.SheetNames.length }, "Parsing workbook")
+
   if (workbook.SheetNames.length === 0) {
     warnings.push({
       code: "empty_workbook",
@@ -45,6 +48,7 @@ export function parseWorkbook(buffer: ArrayBuffer, options: ParseOptions): Valid
     })
 
     if (hiddenSheetNames.has(sheetName)) {
+      logger.warn({ sheetName, importId: options.importId }, "Hidden sheet detected")
       warnings.push({
         code: "hidden_sheet",
         message: `${sheetName} is hidden in the source workbook.`,
@@ -79,6 +83,7 @@ export function parseWorkbook(buffer: ArrayBuffer, options: ParseOptions): Valid
     }
 
     if (sheetRowCount === 0) {
+      logger.warn({ sheetName, importId: options.importId }, "Blank sheet skipped")
       blankSheets += 1
       return
     }
@@ -133,6 +138,8 @@ export function parseWorkbook(buffer: ArrayBuffer, options: ParseOptions): Valid
       count: rows.length,
     })
   }
+
+  logger.info({ importId: options.importId, totalRows: rows.length, totalSheets: sheets.length, blankRowsRemoved, warnings: warnings.length }, "Workbook parsing complete")
 
   return {
     import_id: options.importId,

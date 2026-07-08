@@ -1,21 +1,19 @@
 import Link from "next/link"
-import { notFound } from "next/navigation"
 
 import { AppShell } from "@/components/app-shell"
 import { ImportStepLayout } from "@/components/import-step-layout"
 import { ProcessingStreamPanel } from "@/components/processing-stream-panel"
 import { Button } from "@/components/ui/button"
-import { requireCurrentUser } from "@/server/auth/session"
-import { store } from "@/server/repositories/store"
+import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import type { ImportJob } from "@/lib/types"
 
 export default async function ProcessPage({ params }: { params: Promise<{ importId: string }> }) {
   const { importId } = await params
-  const user = await requireCurrentUser()
-  const job = store.getImport(user.id, importId)
+  await requireCurrentUser()
 
-  if (!job) {
-    notFound()
-  }
+  const data = await serverFetch<{ import: ImportJob }>(`/imports/${importId}`)
+
+  if (!data.import) return null
 
   return (
     <AppShell title="AI Process" description="Stream batch progress while rows are mapped and formatted.">

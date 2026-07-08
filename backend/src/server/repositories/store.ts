@@ -1,10 +1,5 @@
 import {
   demoUserId,
-  sampleCleanedRows,
-  sampleHistory,
-  sampleImport,
-  sampleSavedRows,
-  sampleSheets,
   sampleTemplates,
 } from "../../lib/data/sample-data.js"
 import type {
@@ -20,6 +15,7 @@ import type {
   Template,
 } from "../../lib/types.js"
 import { invalidateAnalyticsCache, invalidateImportCache } from "../redis/cache.js"
+import { logger } from "../../lib/logger.js"
 
 type StoreState = {
   templates: Template[]
@@ -32,20 +28,24 @@ type StoreState = {
 
 const state: StoreState = {
   templates: [...sampleTemplates],
-  imports: [sampleImport],
-  sheets: [...sampleSheets],
-  cleanedRows: [...sampleCleanedRows],
-  savedRows: [...sampleSavedRows],
-  history: [...sampleHistory],
+  imports: [],
+  sheets: [],
+  cleanedRows: [],
+  savedRows: [],
+  history: [],
 }
 
 export const store = {
   listTemplates(userId: string) {
-    return state.templates.filter((template) => template.user_id === userId || template.user_id === demoUserId)
+    const templates = state.templates.filter((template) => template.user_id === userId || template.user_id === demoUserId)
+    logger.debug({ userId, count: templates.length }, "List templates")
+    return templates
   },
 
   getTemplate(userId: string, id: string) {
-    return this.listTemplates(userId).find((template) => template.id === id) ?? null
+    const template = this.listTemplates(userId).find((template) => template.id === id) ?? null
+    logger.debug({ userId, templateId: id, found: template !== null }, "Get template")
+    return template
   },
 
   upsertTemplate(userId: string, input: Omit<Template, "user_id" | "created_at" | "updated_at"> & Partial<Pick<Template, "created_at" | "updated_at">>) {
@@ -59,8 +59,10 @@ export const store = {
     }
 
     if (existingIndex >= 0) {
+      logger.info({ userId, templateId: template.id }, "Updating template")
       state.templates[existingIndex] = template
     } else {
+      logger.info({ userId, templateId: template.id }, "Creating template")
       state.templates.unshift(template)
     }
 
@@ -70,16 +72,21 @@ export const store = {
   deleteTemplate(userId: string, id: string) {
     const before = state.templates.length
     state.templates = state.templates.filter((template) => !(template.id === id && template.user_id === userId))
-
-    return state.templates.length < before
+    const deleted = state.templates.length < before
+    logger.info({ userId, templateId: id, deleted }, "Delete template")
+    return deleted
   },
 
   listImports(userId: string) {
-    return state.imports.filter((job) => job.user_id === userId || job.user_id === demoUserId)
+    const jobs = state.imports.filter((job) => job.user_id === userId || job.user_id === demoUserId)
+    logger.debug({ userId, count: jobs.length }, "List imports")
+    return jobs
   },
 
   getImport(userId: string, id: string) {
-    return this.listImports(userId).find((job) => job.id === id) ?? null
+    const job = this.listImports(userId).find((job) => job.id === id) ?? null
+    logger.debug({ userId, importId: id, found: job !== null }, "Get import")
+    return job
   },
 
   createImport(userId: string, input: {
@@ -124,6 +131,7 @@ export const store = {
       updated_at: now,
     }
 
+    logger.info({ userId, importId: input.id, fileName: input.fileName, totalRows: input.rows.length, totalSheets: input.sheets.length, blankRowsRemoved: input.blankRowsRemoved }, "Import created")
     state.imports.unshift(job)
     state.sheets = [...input.sheets, ...state.sheets]
     void this.addHistory(userId, input.id, "file_uploaded", {
@@ -148,27 +156,36 @@ export const store = {
     }
     state.imports = state.imports.map((job) => (job.id === id ? updated : job))
 
+    logger.debug({ userId, importId: id, patchKeys: Object.keys(patch) }, "Import updated")
     return updated
   },
 
   setStatus(userId: string, id: string, status: ImportStatus) {
+    logger.info({ userId, importId: id, status }, "Import status changed")
     return this.updateImport(userId, id, { status })
   },
 
   listSheets(importId: string) {
-    return state.sheets.filter((sheet) => sheet.import_id === importId)
+    const sheets = state.sheets.filter((sheet) => sheet.import_id === importId)
+    logger.debug({ importId, count: sheets.length }, "List sheets")
+    return sheets
   },
 
   setCleanedRows(importId: string, rows: CleanedRow[]) {
+    logger.info({ importId, count: rows.length }, "Setting cleaned rows")
     state.cleanedRows = [...rows, ...state.cleanedRows.filter((row) => row.import_id !== importId)]
   },
 
   listCleanedRows(importId: string) {
-    return state.cleanedRows.filter((row) => row.import_id === importId)
+    const rows = state.cleanedRows.filter((row) => row.import_id === importId)
+    logger.debug({ importId, count: rows.length }, "List cleaned rows")
+    return rows
   },
 
   listSavedRows(userId: string, importId: string) {
-    return state.savedRows.filter((row) => row.import_id === importId && (row.user_id === userId || row.user_id === demoUserId))
+    const rows = state.savedRows.filter((row) => row.import_id === importId && (row.user_id === userId || row.user_id === demoUserId))
+    logger.debug({ userId, importId, count: rows.length }, "List saved rows")
+    return rows
   },
 
   appendSavedRow(userId: string, importId: string, input: {
@@ -190,6 +207,7 @@ export const store = {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
+    logger.info({ userId, importId, rowId: row.id }, "Appended saved row")
     state.savedRows.push(row)
     void invalidateAnalyticsCache(importId)
 
@@ -200,6 +218,7 @@ export const store = {
     const existing = state.savedRows.find((row) => row.id === rowId && row.user_id === userId)
 
     if (!existing) {
+      logger.warn({ userId, rowId }, "Saved row not found for update")
       return null
     }
 
@@ -208,6 +227,7 @@ export const store = {
       cleaned_data: cleanedData,
       updated_at: new Date().toISOString(),
     }
+    logger.info({ userId, rowId, importId: existing.import_id }, "Updated saved row")
     state.savedRows = state.savedRows.map((row) => (row.id === rowId ? updated : row))
     void invalidateAnalyticsCache(existing.import_id)
 
@@ -218,9 +238,11 @@ export const store = {
     const existing = state.savedRows.find((row) => row.id === rowId && row.user_id === userId)
 
     if (!existing) {
+      logger.warn({ userId, rowId }, "Saved row not found for deletion")
       return false
     }
 
+    logger.info({ userId, rowId, importId: existing.import_id }, "Deleted saved row")
     state.savedRows = state.savedRows.filter((row) => row.id !== rowId)
     void invalidateAnalyticsCache(existing.import_id)
 
@@ -243,6 +265,7 @@ export const store = {
       updated_at: new Date().toISOString(),
     }))
 
+    logger.info({ userId, importId, savedCount: savedRows.length, totalInput: rows.length }, "Saving good rows")
     state.savedRows = [...state.savedRows.filter((row) => row.import_id !== importId), ...savedRows]
     void invalidateImportCache(importId)
     void this.addHistory(userId, importId, "rows_saved", {
@@ -255,7 +278,9 @@ export const store = {
   },
 
   listHistory(userId: string) {
-    return state.history.filter((entry) => entry.user_id === userId || entry.user_id === demoUserId)
+    const entries = state.history.filter((entry) => entry.user_id === userId || entry.user_id === demoUserId)
+    logger.debug({ userId, count: entries.length }, "List history")
+    return entries
   },
 
   addHistory(userId: string, importId: string, action: HistoryAction, meta: Record<string, unknown>) {
@@ -269,7 +294,7 @@ export const store = {
     }
 
     state.history.unshift(entry)
-
+    logger.info({ userId, importId, action }, "History entry added")
     return entry
   },
 }

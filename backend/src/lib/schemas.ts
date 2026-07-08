@@ -87,7 +87,7 @@ export const tableRowsQuerySchema = z.object({
   sheet: z.string().optional(),
   status: rowStatusSchema.optional(),
   search: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(500).default(100),
+  limit: z.coerce.number().int().min(1).max(10000).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 })
 
@@ -134,4 +134,55 @@ export const exportExcelSchema = z.object({
   mode: z.enum(["all_good", "same_tabs", "selected_sheet", "filtered", "missing_summary"]).default("all_good"),
   sheet_name: z.string().optional(),
   search: z.string().optional(),
+})
+
+export const cleanBatchTemplateColumnSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  type: z.string().min(1).default("text"),
+  required: z.boolean().default(false),
+})
+
+export const cleanBatchRequestSchema = z.object({
+  batch_id: z.string().min(1),
+  selected_template: z.object({
+    name: z.string().min(1),
+    columns: z.array(cleanBatchTemplateColumnSchema).min(1),
+  }),
+  rows: z.array(
+    z.object({
+      source_sheet: z.string().min(1),
+      source_sheet_index: z.number().int().min(0),
+      source_row_index: z.number().int().min(1),
+      data: z.record(z.string(), z.string()),
+    })
+  ),
+})
+
+export const cleanBatchOutputRowSchema = z.object({
+  source_sheet: z.string(),
+  source_sheet_index: z.number().int().min(0),
+  source_row_index: z.number().int().min(1),
+  status: z.enum(["good", "missing", "skipped"]),
+  missing_fields: z.array(z.string()).default([]),
+  skip_reason: z.string().default(""),
+  cleaned_data: rowDataSchema,
+  ai_changes: z.array(aiCellChangeSchema).default([]),
+})
+
+export const cleanBatchResultSchema = z.object({
+  batch_id: z.string(),
+  good_rows: z.array(cleanBatchOutputRowSchema),
+  missing_rows: z.array(cleanBatchOutputRowSchema),
+  skipped_rows: z.array(cleanBatchOutputRowSchema),
+  summary: z.object({
+    total_input_rows: z.number().int().min(0),
+    good_count: z.number().int().min(0),
+    missing_count: z.number().int().min(0),
+    skipped_count: z.number().int().min(0),
+    ai_changed_row_count: z.number().int().min(0),
+    ai_changed_cell_count: z.number().int().min(0),
+    missing_by_field: z.record(z.string(), z.number().int().min(0)),
+    skipped_by_reason: z.record(z.string(), z.number().int().min(0)),
+  }),
 })

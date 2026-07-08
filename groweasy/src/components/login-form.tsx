@@ -2,18 +2,12 @@
 
 import { useState } from "react"
 import { toast } from "sonner"
-
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  FieldSeparator,
-} from "@/components/ui/field"
+import Link from "next/link"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { GoogleIcon } from "@/components/icons/google-icon"
+import { API_BASE } from "@/lib/api-client"
 import { cn } from "@/lib/utils"
-import { FileSpreadsheetIcon, Loader2Icon } from "lucide-react"
+import { FileSpreadsheetIcon, Loader2Icon, ShieldAlertIcon, SparklesIcon, ArrowRightIcon } from "lucide-react"
 
 export function LoginForm({
   className,
@@ -26,14 +20,15 @@ export function LoginForm({
     setPending(true)
 
     try {
-      const response = await fetch("/api/auth/sign-in/social", {
+      const response = await fetch(`${API_BASE}/api/auth/sign-in/social`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: "google",
-          callbackURL: "/dashboard",
-          errorCallbackURL: "/login",
+          callbackURL: `${window.location.origin}/dashboard`,
+          errorCallbackURL: `${window.location.origin}/login`,
         }),
+        credentials: "include",
       })
       const data = (await response.json()) as { url?: string; error?: { message?: string } }
 
@@ -55,54 +50,81 @@ export function LoginForm({
           event.preventDefault()
           void signInWithGoogle()
         }}
+        className="space-y-6"
       >
-        <FieldGroup>
-          <div className="flex flex-col items-center gap-2 text-center">
-            <a href="/dashboard" className="flex flex-col items-center gap-2 font-medium">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <FileSpreadsheetIcon className="size-5" />
-              </div>
-              <span className="sr-only">GrowEasy</span>
-            </a>
-            <h1 className="text-xl font-bold">Welcome to GrowEasy</h1>
-            <FieldDescription>
+        <div className="flex flex-col items-center gap-3 text-center">
+          <a href="/dashboard" className="flex flex-col items-center gap-2 group">
+            {/* Logo box with pulse glow */}
+            <div className="flex size-11 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-zinc-950 font-bold shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform duration-300">
+              <FileSpreadsheetIcon className="size-6 text-zinc-950" />
+            </div>
+          </a>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-black tracking-tight bg-gradient-to-r from-white via-zinc-200 to-zinc-400 bg-clip-text text-transparent">
+              Welcome to GrowEasy
+            </h1>
+            <p className="text-xs text-zinc-400 max-w-[280px] mx-auto leading-normal">
               Sign in to clean spreadsheets, save valid rows, and export clean tables.
-            </FieldDescription>
+            </p>
           </div>
+        </div>
+
+        {/* Local Demo Warning Banner */}
+        {!authConfigured ? (
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5 text-zinc-300 flex gap-3 text-[11px] leading-normal">
+            <ShieldAlertIcon className="size-4.5 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold text-amber-400 block mb-0.5">Local Demo Mode Active</span>
+              Add Better Auth, Google Client credentials, and database secrets to `.env` to enforce production Google sessions.
+            </div>
+          </div>
+        ) : null}
+
+        <div className="space-y-4">
+          {/* Custom Clean Separator */}
+          <div className="relative flex items-center my-4">
+            <div className="flex-grow border-t border-zinc-800/80" />
+            <span className="flex-shrink mx-3.5 text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
+              Continue with
+            </span>
+            <div className="flex-grow border-t border-zinc-800/80" />
+          </div>
+
+          {/* Google Sign-in Button */}
+          <Button
+            variant="outline"
+            type="submit"
+            disabled={pending}
+            className="w-full gap-2.5 py-5 rounded-xl border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 hover:text-white text-zinc-200 transition-all font-semibold"
+          >
+            {pending ? (
+              <Loader2Icon className="size-4 animate-spin" />
+            ) : (
+              <GoogleIcon className="size-4" />
+            )}
+            {pending ? "Connecting..." : "Sign in with Google"}
+          </Button>
+
+          {/* Continue in Demo Mode Action */}
           {!authConfigured ? (
-            <Alert>
-              <AlertTitle>Local demo mode</AlertTitle>
-              <AlertDescription>
-                Add Better Auth, Google, and database environment variables to enforce live Google sessions.
-              </AlertDescription>
-            </Alert>
+            <Link
+              href="/dashboard"
+              className={cn(
+                buttonVariants({ variant: "default" }),
+                "w-full py-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-zinc-950 font-bold transition-all shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:scale-[1.01] flex items-center justify-center gap-1.5"
+              )}
+            >
+              <SparklesIcon className="size-4" />
+              Continue in Demo Mode
+              <ArrowRightIcon className="size-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
+            </Link>
           ) : null}
-          <FieldSeparator>Continue with</FieldSeparator>
-          <Field>
-            <FieldLabel className="sr-only">Google</FieldLabel>
-            <Button variant="outline" type="submit" disabled={pending} className="w-full">
-              {pending ? <Loader2Icon className="animate-spin" /> : null}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"
-                  fill="currentColor"
-                />
-              </svg>
-              Continue with Google
-            </Button>
-          </Field>
-          {!authConfigured ? (
-            <Field>
-              <Button type="button" className="w-full" render={<a href="/dashboard" />}>
-                Continue in demo mode
-              </Button>
-            </Field>
-          ) : null}
-        </FieldGroup>
+        </div>
       </form>
-      <FieldDescription className="px-6 text-center">
-        Secrets stay on the server. Service-role, AI, Redis, and Google Sheet keys are never exposed to the frontend.
-      </FieldDescription>
+
+      <p className="px-4 text-center text-[10px] text-zinc-500 leading-normal">
+        Secrets stay on the server. API keys, integrations, and database credentials are never exposed to the frontend.
+      </p>
     </div>
   )
 }

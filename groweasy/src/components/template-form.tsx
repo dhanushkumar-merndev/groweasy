@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { PlusIcon, SaveIcon, Trash2Icon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { api } from "@/lib/api-client"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -37,7 +38,7 @@ export function TemplateForm({ template }: { template?: Template }) {
     setPending(true)
 
     try {
-      const response = await fetch(editing ? `/api/templates/${template?.id}` : "/api/templates", {
+      const response = await api(editing ? `/templates/${template?.id}` : "/templates", {
         method: editing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

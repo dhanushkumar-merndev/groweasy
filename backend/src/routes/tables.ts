@@ -4,6 +4,7 @@ import { appendRowSchema, savedRowPatchSchema, tableRowsQuerySchema } from "../l
 import { handleRouteError, jsonError, jsonOk, parseJsonBody } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
 import { store } from "../server/repositories/store.js"
+import { logger } from "../lib/logger.js"
 
 const router = Router()
 
@@ -28,6 +29,7 @@ router.get("/:importId/rows", async (req, res) => {
       )
     const rows = filtered.slice(query.offset, query.offset + query.limit)
 
+    logger.debug({ importId, total: filtered.length, returned: rows.length }, "List saved rows")
     return jsonOk(res, {
       rows,
       total: filtered.length,
@@ -48,6 +50,7 @@ router.post("/:importId/rows", async (req, res) => {
     }
 
     const body = parseJsonBody(req.body, appendRowSchema)
+    logger.info({ userId: user.id, importId }, "Appending row")
     const row = store.appendSavedRow(user.id, importId, body)
     await store.addHistory(user.id, importId, "rows_added", { row_id: row.id })
 
@@ -74,6 +77,7 @@ router.patch("/:importId/rows/:rowId", async (req, res) => {
       return jsonError(res, "ROW_NOT_FOUND", "Saved row not found.", 404)
     }
 
+    logger.info({ userId: user.id, rowId }, "Updated saved row")
     return jsonOk(res, { row })
   } catch (error) {
     return handleRouteError(res, error)
@@ -97,6 +101,7 @@ router.delete("/:importId/rows/:rowId", async (req, res) => {
     }
 
     await store.addHistory(user.id, importId, "rows_deleted", { row_id: rowId })
+    logger.info({ userId: user.id, rowId }, "Deleted saved row")
 
     return jsonOk(res, { deleted: true })
   } catch (error) {

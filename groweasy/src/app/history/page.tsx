@@ -1,12 +1,13 @@
 import { AppShell } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { requireCurrentUser } from "@/server/auth/session"
-import { store } from "@/server/repositories/store"
+import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import type { HistoryLog } from "@/lib/types"
 
 export default async function HistoryPage() {
-  const user = await requireCurrentUser()
-  const history = store.listHistory(user.id)
+  await requireCurrentUser()
+
+  const { history } = await serverFetch<{ history: HistoryLog[] }>("/history")
 
   return (
     <AppShell title="History" description="Permanent count-based events for uploads, saves, row changes, and exports.">

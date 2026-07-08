@@ -1,30 +1,23 @@
 import Link from "next/link"
-import { notFound } from "next/navigation"
 
 import { ImportStepLayout } from "@/components/import-step-layout"
 import { RawPreviewTable, ValidationWarnings } from "@/components/raw-preview-table"
 import { SheetTabs } from "@/components/sheet-tabs"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/app-shell"
-import type { ValidationResult } from "@/lib/types"
-import { cacheKeys, getCache } from "@/server/redis/cache"
-import { requireCurrentUser } from "@/server/auth/session"
-import { store } from "@/server/repositories/store"
+import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import type { ImportJob, ValidationResult } from "@/lib/types"
 
 export default async function ValidatePage({ params }: { params: Promise<{ importId: string }> }) {
   const { importId } = await params
-  const user = await requireCurrentUser()
-  const job = store.getImport(user.id, importId)
+  await requireCurrentUser()
 
-  if (!job) {
-    notFound()
-  }
+  const data = await serverFetch<{ import: ImportJob; validation: ValidationResult | null }>(
+    `/imports/${importId}`
+  )
+  const { import: job, validation } = data
 
-  const validation = await getCache<ValidationResult>(cacheKeys(importId).validation)
-
-  if (!validation) {
-    notFound()
-  }
+  if (!job || !validation) return null
 
   return (
     <AppShell title="Validate" description={`${job.file_name} passed deterministic cleanup before AI.`}>

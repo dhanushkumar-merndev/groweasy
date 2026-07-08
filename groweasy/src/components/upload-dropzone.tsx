@@ -1,76 +1,71 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import * as XLSX from "xlsx"
 import { FileSpreadsheetIcon, Loader2Icon, UploadCloudIcon } from "lucide-react"
 
+import { CleanBatchResultView, type CleanBatchResponse } from "@/components/clean-batch-result"
 import { TemplateSelector } from "@/components/template-selector"
+import { api } from "@/lib/api-client"
+import { createRawBatchPayload, parseFileToRawRows, type ParsedRawUpload } from "@/lib/raw-batch-parser"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import type { Template } from "@/lib/types"
 
-type SheetPreview = {
-  name: string
-  rows: number
-}
-
 export function UploadDropzone({ templates }: { templates: Template[] }) {
-  const router = useRouter()
   const [file, setFile] = useState<File | null>(null)
   const [templateId, setTemplateId] = useState(templates[0]?.id ?? "")
-  const [removeBlankRows, setRemoveBlankRows] = useState(true)
-  const [dashValuesBlank, setDashValuesBlank] = useState(true)
-  const [sheets, setSheets] = useState<SheetPreview[]>([])
+  const [parsedUpload, setParsedUpload] = useState<ParsedRawUpload | null>(null)
+  const [result, setResult] = useState<CleanBatchResponse | null>(null)
   const [pending, setPending] = useState(false)
+  const selectedTemplate = useMemo(
+    () => templates.find((template) => template.id === templateId) ?? null,
+    [templateId, templates]
+  )
+  const sheets = useMemo(() => parsedUpload?.sheets ?? [], [parsedUpload])
   const totalRows = useMemo(() => sheets.reduce((total, sheet) => total + sheet.rows, 0), [sheets])
 
   async function inspectFile(nextFile: File) {
     setFile(nextFile)
+    setParsedUpload(null)
+    setResult(null)
 
     try {
-      const workbook = XLSX.read(await nextFile.arrayBuffer(), { type: "array" })
-      const preview = workbook.SheetNames.map((name) => ({
-        name,
-        rows: Math.max(0, XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 }).length - 1),
-      }))
-      setSheets(preview)
-    } catch {
-      setSheets([])
-      toast.error("Unable to preview this workbook. The server will validate it on upload.")
+      setParsedUpload(await parseFileToRawRows(nextFile))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to parse this file.")
     }
   }
 
   async function submitUpload() {
-    if (!file || !templateId) {
+    if (!file || !selectedTemplate || !parsedUpload) {
       toast.error("Choose a file and a template first.")
       return
     }
 
     setPending(true)
-    const formData = new FormData()
-    formData.set("file", file)
-    formData.set("template_id", templateId)
-    formData.set("remove_blank_rows", String(removeBlankRows))
-    formData.set("dash_values_blank", String(dashValuesBlank))
+    const payload = createRawBatchPayload(selectedTemplate, parsedUpload)
 
     try {
-      const response = await fetch("/api/imports", {
+      const response = await api("/clean-batch", {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       })
-      const data = (await response.json()) as { next?: string; error?: { message: string } }
+      const data = (await response.json()) as CleanBatchResponse
 
-      if (!response.ok || !data.next) {
-        throw new Error(data.error?.message ?? "Upload failed.")
+      if (!response.ok) {
+        throw new Error(data.error?.message ?? "Batch cleaning failed.")
       }
 
-      router.push(data.next)
+      setResult(data)
+      toast.success("Batch cleaned by Groq.")
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Upload failed.")
+      toast.error(error instanceof Error ? error.message : "Batch cleaning failed.")
+    } finally {
       setPending(false)
     }
   }
@@ -79,7 +74,7 @@ export function UploadDropzone({ templates }: { templates: Template[] }) {
     <Card>
       <CardHeader>
         <CardTitle>Upload workbook</CardTitle>
-        <CardDescription>Upload Excel, CSV, TSV, or ODS files. AI processing starts only after validation.</CardDescription>
+        <CardDescription>Upload a CSV or Excel file and send the raw parsed rows to Groq.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-5">
         <label
@@ -96,7 +91,7 @@ export function UploadDropzone({ templates }: { templates: Template[] }) {
         >
           <input
             type="file"
-            accept=".xlsx,.xls,.csv,.tsv,.ods"
+            accept=".xlsx,.xls,.csv"
             className="sr-only"
             onChange={(event) => {
               const selected = event.target.files?.item(0)
@@ -109,7 +104,7 @@ export function UploadDropzone({ templates }: { templates: Template[] }) {
           <UploadCloudIcon className="size-8 text-primary" />
           <div>
             <p className="font-medium">Drop a spreadsheet or choose a file</p>
-            <p className="text-sm text-muted-foreground">Multi-sheet workbooks are preserved under one import.</p>
+            <p className="text-sm text-muted-foreground">Headers and raw cell values are preserved for backend cleaning.</p>
           </div>
         </label>
 
@@ -119,7 +114,9 @@ export function UploadDropzone({ templates }: { templates: Template[] }) {
               <FileSpreadsheetIcon className="size-5 text-primary" />
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{file.name}</p>
-                <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KB · {totalRows} raw rows detected</p>
+                <p className="text-xs text-muted-foreground">
+                  {(file.size / 1024).toFixed(1)} KB · {totalRows} raw rows detected
+                </p>
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -137,21 +134,12 @@ export function UploadDropzone({ templates }: { templates: Template[] }) {
           <TemplateSelector templates={templates} value={templateId} onValueChange={setTemplateId} />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex items-center gap-2 rounded-lg border p-3">
-            <Checkbox checked={removeBlankRows} onCheckedChange={(value) => setRemoveBlankRows(Boolean(value))} />
-            <span className="text-sm">Remove blank rows</span>
-          </label>
-          <label className="flex items-center gap-2 rounded-lg border p-3">
-            <Checkbox checked={dashValuesBlank} onCheckedChange={(value) => setDashValuesBlank(Boolean(value))} />
-            <span className="text-sm">Treat dash/NA values as blank</span>
-          </label>
-        </div>
-
-        <Button onClick={submitUpload} disabled={pending || !file || !templateId} className="w-full sm:w-fit">
+        <Button onClick={submitUpload} disabled={pending || !file || !selectedTemplate || !parsedUpload} className="w-full sm:w-fit">
           {pending ? <Loader2Icon className="animate-spin" /> : null}
-          Validate upload
+          Clean batch
         </Button>
+
+        {result ? <CleanBatchResultView result={result} /> : null}
       </CardContent>
     </Card>
   )

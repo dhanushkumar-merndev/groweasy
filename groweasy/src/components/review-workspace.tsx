@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { SaveIcon } from "lucide-react"
 
 import { DataGrid } from "@/components/data-grid"
+import { api } from "@/lib/api-client"
 import { ExportMenu } from "@/components/export-menu"
 import { Button } from "@/components/ui/button"
 import type { CleanedRow, Template } from "@/lib/types"
@@ -25,7 +26,7 @@ export function ReviewWorkspace({
     setPending(true)
 
     try {
-      const response = await fetch(`/api/imports/${importId}/save`, {
+      const response = await api(`/imports/${importId}/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rows: editableRows }),

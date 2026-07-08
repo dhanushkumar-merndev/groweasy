@@ -1,29 +1,23 @@
-import { notFound } from "next/navigation"
-
 import { AppShell } from "@/components/app-shell"
 import { ImportStepLayout } from "@/components/import-step-layout"
 import { ReviewWorkspace } from "@/components/review-workspace"
 import { StatusCountCards } from "@/components/status-count-cards"
-import { getProcessedRows } from "@/server/ai/excel-cleaner"
-import { requireCurrentUser } from "@/server/auth/session"
-import { store } from "@/server/repositories/store"
+import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import type { CleanedRow, ImportJob, Template } from "@/lib/types"
 
 export default async function ReviewPage({ params }: { params: Promise<{ importId: string }> }) {
   const { importId } = await params
-  const user = await requireCurrentUser()
-  const job = store.getImport(user.id, importId)
+  await requireCurrentUser()
 
-  if (!job) {
-    notFound()
-  }
+  const importData = await serverFetch<{ import: ImportJob; template: Template | null; cleaned_rows: CleanedRow[] }>(
+    `/imports/${importId}`
+  )
+  const { import: job, template } = importData
 
-  const template = store.getTemplate(user.id, job.template_id)
+  if (!job || !template) return null
 
-  if (!template) {
-    notFound()
-  }
-
-  const rows = await getProcessedRows(importId, job.updated_at)
+  const results = await serverFetch<{ rows: CleanedRow[] }>(`/imports/${importId}/results`)
+  const rows = results.rows
 
   return (
     <AppShell title="Review" description="Edit good and missing rows, then permanently save only valid rows.">

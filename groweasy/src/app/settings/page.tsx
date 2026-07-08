@@ -1,19 +1,27 @@
 import { AppShell } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { isAuthConfigured } from "@/server/auth/auth"
-import { isSupabaseConfigured } from "@/server/db/supabase"
-import { isGoogleSheetsConfigured } from "@/server/google/sheets"
+import { serverFetch } from "@/lib/server-api"
 
-const settings = [
-  ["Better Auth Google", isAuthConfigured()],
-  ["Supabase service role", isSupabaseConfigured()],
-  ["Redis / Upstash", Boolean(process.env.REDIS_URL || process.env.UPSTASH_REDIS_REST_URL)],
-  ["Groq AI", Boolean(process.env.GROQ_API_KEY)],
-  ["Google Sheets service account", isGoogleSheetsConfigured()],
-] as const
+type ConfigStatus = {
+  auth: boolean
+  supabase: boolean
+  google_sheets: boolean
+  redis: boolean
+  groq: boolean
+}
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const config = await serverFetch<ConfigStatus>("/auth/config")
+
+  const settings: [string, boolean][] = [
+    ["Better Auth Google", config.auth],
+    ["Supabase service role", config.supabase],
+    ["Redis / Upstash", config.redis],
+    ["Groq AI", config.groq],
+    ["Google Sheets service account", config.google_sheets],
+  ]
+
   return (
     <AppShell title="Settings" description="Server-side provider readiness and safe secret boundaries.">
       <Card>

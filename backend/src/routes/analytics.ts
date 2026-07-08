@@ -4,6 +4,7 @@ import { analyticsSuggestSchema } from "../lib/schemas.js"
 import type { ChartType } from "../lib/types.js"
 import { handleRouteError, jsonOk, parseJsonBody } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
+import { logger } from "../lib/logger.js"
 
 const router = Router()
 
@@ -23,6 +24,7 @@ router.post("/suggest-chart", async (req, res) => {
           ? "horizontal_bar"
           : "bar"
 
+    logger.info({ importId: body.import_id, chartType: chart_type, columns: body.columns }, "Chart suggestion generated")
     return jsonOk(res, {
       suggestion: {
         import_id: body.import_id,

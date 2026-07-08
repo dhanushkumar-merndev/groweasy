@@ -17,10 +17,8 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import {
-  BarChart3Icon,
-  Clock3Icon,
-  DatabaseIcon,
   FileSpreadsheetIcon,
+  BarChart3Icon,
   HistoryIcon,
   LayoutDashboardIcon,
   Settings2Icon,
@@ -28,7 +26,8 @@ import {
   Table2Icon,
   UploadCloudIcon,
 } from "lucide-react"
-import type { CurrentUser } from "@/server/auth/session"
+import type { CurrentUser } from "@/lib/server-api"
+import { AccountSwitcher } from "@/components/account-switcher"
 
 const primaryNav = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboardIcon },
@@ -57,7 +56,7 @@ export function AppSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              className="data-[slot=sidebar-menu-button]:p-1.5!"
+              className="data-[slot=sidebar-menu-button]:p-1.5! hover:bg-transparent hover:text-sidebar-foreground active:bg-transparent active:text-sidebar-foreground data-open:hover:bg-transparent data-open:hover:text-sidebar-foreground"
               render={<Link href="/dashboard" />}
             >
               <SparklesIcon className="size-5!" />
@@ -70,7 +69,7 @@ export function AppSidebar({
         <SidebarGroup>
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className="space-y-1">
               {primaryNav.map((item) => {
                 const Icon = item.icon
                 const active = pathname === item.url || pathname.startsWith(`${item.url}/`)
@@ -94,19 +93,7 @@ export function AppSidebar({
         <SidebarGroup className="mt-auto">
           <SidebarGroupLabel>System</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Redis cache">
-                  <DatabaseIcon />
-                  <span>Redis TTL: 1 day</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Batch defaults">
-                  <Clock3Icon />
-                  <span>75 rows / batch</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+            <SidebarMenu className="space-y-1">
               {secondaryNav.map((item) => {
                 const Icon = item.icon
 
@@ -126,17 +113,17 @@ export function AppSidebar({
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton>
-              <span className="flex size-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
-                GE
-              </span>
-              <span className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{user?.name ?? "Excel Cleaner"}</span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {user?.isDemo ? "Demo workspace" : user?.email ?? "Google login ready"}
-                </span>
-              </span>
-            </SidebarMenuButton>
+            <AccountSwitcher
+              user={
+                user ?? {
+                  id: "demo",
+                  name: "Excel Cleaner",
+                  email: "Google login ready",
+                  image: null,
+                  isDemo: true,
+                }
+              }
+            />
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>

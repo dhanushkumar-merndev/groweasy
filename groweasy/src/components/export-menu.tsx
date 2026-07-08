@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { DownloadIcon, FileSpreadsheetIcon, TableIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { api } from "@/lib/api-client"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,7 +14,7 @@ import {
 
 export function ExportMenu({ importId }: { importId: string }) {
   async function exportExcel(mode: "all_good" | "same_tabs") {
-    const response = await fetch(`/api/imports/${importId}/export/excel`, {
+    const response = await api(`/imports/${importId}/export/excel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode }),
@@ -34,7 +35,7 @@ export function ExportMenu({ importId }: { importId: string }) {
   }
 
   async function exportGoogleSheet() {
-    const response = await fetch(`/api/imports/${importId}/export/google-sheet`, {
+    const response = await api(`/imports/${importId}/export/google-sheet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ import_id: importId, sheet_name: "Cleaned Data" }),

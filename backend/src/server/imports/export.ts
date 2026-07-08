@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx"
 
 import type { SavedRow, Template } from "../../lib/types.js"
+import { logger } from "../../lib/logger.js"
 
 export function buildExcelExport(input: {
   rows: SavedRow[]
@@ -10,6 +11,8 @@ export function buildExcelExport(input: {
 }) {
   const workbook = XLSX.utils.book_new()
   const rows = input.sheetName ? input.rows.filter((row) => row.sheet_name === input.sheetName) : input.rows
+
+  logger.info({ rowCount: rows.length, mode: input.mode, sheetName: input.sheetName }, "Building Excel export")
 
   if (input.mode === "same_tabs") {
     const sheets = new Map<string, SavedRow[]>()

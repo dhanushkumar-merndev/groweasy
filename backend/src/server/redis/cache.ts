@@ -1,6 +1,7 @@
 import { Redis } from "@upstash/redis"
 
 import type { CacheEnvelope } from "../../lib/types.js"
+import { logger } from "../../lib/logger.js"
 
 const TTL_SECONDS = 86_400
 const VERSION = "v1"
@@ -17,9 +18,11 @@ function createRedisClient() {
   const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.REDIS_TOKEN
 
   if (!url || !token) {
+    logger.info("Redis not configured, using in-memory cache")
     return null
   }
 
+  logger.info("Redis client created")
   return new Redis({ url, token })
 }
 
@@ -81,6 +84,7 @@ export async function deleteCache(key: string) {
 }
 
 export async function invalidateImportCache(importId: string) {
+  logger.debug({ importId }, "Invalidating import cache")
   await deleteCache(`import:${importId}:raw:v1`)
   await deleteCache(`import:${importId}:validation:v1`)
   await deleteCache(`import:${importId}:formatted:v1`)
@@ -96,6 +100,7 @@ export async function invalidateImportCache(importId: string) {
 }
 
 export async function invalidateAnalyticsCache(importId: string) {
+  logger.debug({ importId }, "Invalidating analytics cache")
   for (const key of [...memoryCache.keys()]) {
     if (key.startsWith(`analytics:${importId}:`)) {
       memoryCache.delete(key)

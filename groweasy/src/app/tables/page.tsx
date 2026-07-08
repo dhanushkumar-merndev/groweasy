@@ -5,12 +5,13 @@ import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { requireCurrentUser } from "@/server/auth/session"
-import { store } from "@/server/repositories/store"
+import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import type { ImportJob } from "@/lib/types"
 
 export default async function TablesPage() {
-  const user = await requireCurrentUser()
-  const imports = store.listImports(user.id)
+  await requireCurrentUser()
+
+  const { imports } = await serverFetch<{ imports: ImportJob[] }>("/imports")
 
   return (
     <AppShell title="Saved Tables" description="Open saved imports, filter sheets, edit rows, and export clean data.">

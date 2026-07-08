@@ -5,6 +5,7 @@ import { handleRouteError, jsonError, jsonOk, parseJsonBody } from "../server/ap
 import { requireCurrentUser } from "../middleware/auth.js"
 import { store } from "../server/repositories/store.js"
 import { exportRowsToGoogleSheet, importRowsFromGoogleSheet } from "../server/google/sheets.js"
+import { logger } from "../lib/logger.js"
 
 const router = Router()
 
@@ -24,6 +25,7 @@ router.post("/export", async (req, res) => {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)
     }
 
+    logger.info({ importId: body.import_id, spreadsheetId: body.spreadsheet_id }, "Google Sheets export requested")
     const result = await exportRowsToGoogleSheet({
       spreadsheetId: body.spreadsheet_id,
       sheetName: body.sheet_name,
@@ -43,6 +45,7 @@ router.post("/import", async (req, res) => {
     const body = parseJsonBody(req.body, googleSheetImportSchema)
     const result = await importRowsFromGoogleSheet()
 
+    logger.info({ spreadsheetId: body.spreadsheet_id, range: body.range }, "Google Sheets import requested")
     return jsonOk(res, {
       ...result,
       spreadsheet_id: body.spreadsheet_id,

@@ -5,6 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { toast } from "sonner"
 
 import { EditableCell } from "@/components/editable-cell"
+import { api } from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -71,7 +72,7 @@ export function VirtualTable({
   }
 
   async function saveRow(row: SavedRow) {
-    const response = await fetch(`/api/tables/${importId}/rows/${row.id}`, {
+    const response = await api(`/tables/${importId}/rows/${row.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cleaned_data: row.cleaned_data }),

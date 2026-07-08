@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { Loader2Icon, PlayIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { API_BASE } from "@/lib/api-client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 
@@ -46,10 +47,11 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
     setStatus("Starting AI batch processing")
 
     try {
-      const response = await fetch(`/api/imports/${importId}/process`, {
+      const response = await fetch(`${API_BASE}/api/imports/${importId}/process`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ force: true }),
+        credentials: "include",
       })
 
       if (!response.ok) {
@@ -57,7 +59,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
         throw new Error(data.error?.message ?? "Processing failed.")
       }
 
-      const source = new EventSource(`/api/imports/${importId}/stream`)
+      const source = new EventSource(`${API_BASE}/api/imports/${importId}/stream`)
 
       source.onmessage = (event) => {
         const data = JSON.parse(event.data) as StreamEvent

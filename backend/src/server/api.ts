@@ -2,6 +2,7 @@ import type { Response } from "express"
 import { ZodError, type ZodSchema } from "zod"
 
 import type { ApiError } from "../lib/types.js"
+import { logger } from "../lib/logger.js"
 
 export function jsonOk<T>(res: Response, data: T, status = 200) {
   return res.status(status).json(data)
@@ -34,13 +35,15 @@ export class RequestValidationError extends Error {
 
 export function handleRouteError(res: Response, error: unknown) {
   if (error instanceof RequestValidationError || error instanceof ZodError) {
+    logger.warn({ err: error }, "Request validation failed")
     return jsonError(res, "BAD_REQUEST", error.message, 400)
   }
 
   if (error instanceof Error && error.message === "UNAUTHORIZED") {
+    logger.warn("Unauthorized route access")
     return jsonError(res, "UNAUTHORIZED", "Please sign in to continue.", 401)
   }
 
-  console.error("[server]", error)
+  logger.error({ err: error }, "Unhandled route error")
   return jsonError(res, "SERVER_ERROR", "Something went wrong. Please retry.", 500)
 }

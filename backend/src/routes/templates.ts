@@ -1,15 +1,16 @@
 import { Router } from "express"
 
-import { templateInputSchema } from "../lib/schemas.js"
-import { handleRouteError, jsonOk, parseJsonBody } from "../server/api.js"
+import { handleRouteError, jsonError, jsonOk } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
 import { store } from "../server/repositories/store.js"
+import { logger } from "../lib/logger.js"
 
 const router = Router()
 
 router.get("/", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
+    logger.info({ userId: user.id }, "List templates")
     return jsonOk(res, { templates: store.listTemplates(user.id) })
   } catch (error) {
     return handleRouteError(res, error)
@@ -18,16 +19,8 @@ router.get("/", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const user = await requireCurrentUser(req)
-    const body = parseJsonBody(req.body, templateInputSchema)
-    const template = store.upsertTemplate(user.id, {
-      id: crypto.randomUUID(),
-      name: body.name,
-      columns_config: body.columns_config,
-      formatting_rules: body.formatting_rules,
-    })
-
-    return jsonOk(res, { template }, 201)
+    await requireCurrentUser(req)
+    return jsonError(res, "TEMPLATE_LOCKED", "Use the default Lead Cleaning Template.", 403)
   } catch (error) {
     return handleRouteError(res, error)
   }
@@ -51,24 +44,8 @@ router.get("/:id", async (req, res) => {
 
 router.patch("/:id", async (req, res) => {
   try {
-    const user = await requireCurrentUser(req)
-    const { id } = req.params
-    const existing = store.getTemplate(user.id, id)
-
-    if (!existing) {
-      return jsonOk(res, { template: null })
-    }
-
-    const body = parseJsonBody(req.body, templateInputSchema)
-    const template = store.upsertTemplate(user.id, {
-      id,
-      name: body.name,
-      columns_config: body.columns_config,
-      formatting_rules: body.formatting_rules,
-      created_at: existing.created_at,
-    })
-
-    return jsonOk(res, { template })
+    await requireCurrentUser(req)
+    return jsonError(res, "TEMPLATE_LOCKED", "The default template cannot be edited.", 403)
   } catch (error) {
     return handleRouteError(res, error)
   }
@@ -76,15 +53,8 @@ router.patch("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
-    const user = await requireCurrentUser(req)
-    const { id } = req.params
-    const deleted = store.deleteTemplate(user.id, id)
-
-    if (!deleted) {
-      return jsonOk(res, { deleted: false })
-    }
-
-    return jsonOk(res, { deleted: true })
+    await requireCurrentUser(req)
+    return jsonError(res, "TEMPLATE_LOCKED", "The default template cannot be deleted.", 403)
   } catch (error) {
     return handleRouteError(res, error)
   }

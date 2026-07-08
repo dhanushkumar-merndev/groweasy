@@ -1,4 +1,5 @@
 import { Router } from "express"
+import multer from "multer"
 
 import { uploadOptionsSchema, processImportSchema, saveImportSchema, exportExcelSchema, googleSheetExportSchema } from "../lib/schemas.js"
 import type { AiBatchResult, RawImportRow, ValidationResult } from "../lib/types.js"
@@ -10,7 +11,9 @@ import { store } from "../server/repositories/store.js"
 import { processImportRows, getProcessedRows } from "../server/ai/excel-cleaner.js"
 import { buildExcelExport } from "../server/imports/export.js"
 import { exportRowsToGoogleSheet } from "../server/google/sheets.js"
+import { logger } from "../lib/logger.js"
 
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
 const router = Router()
 
 const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".tsv", ".ods"]
@@ -18,30 +21,24 @@ const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".tsv", ".ods"]
 router.get("/", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
+    logger.info({ userId: user.id }, "List imports")
     return jsonOk(res, { imports: store.listImports(user.id) })
   } catch (error) {
     return handleRouteError(res, error)
   }
 })
 
-router.post("/", async (req, res) => {
+router.post("/", upload.single("file"), async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
-    const contentType = req.headers["content-type"] ?? ""
 
-    if (!contentType.includes("multipart/form-data")) {
-      return jsonError(res, "INVALID_REQUEST", "Expected multipart/form-data.", 400)
-    }
-
-    const file = (req as unknown as Record<string, unknown>).file ?? null
-
-    if (!file) {
+    if (!req.file) {
+      logger.warn({ userId: user.id }, "Upload attempted without file")
       return jsonError(res, "INVALID_FILE", "Upload an Excel, CSV, TSV, or ODS file.", 400)
     }
 
-    const f = file as Express.MulterFile
-
-    if (!ALLOWED_EXTENSIONS.some((ext) => f.originalname.toLowerCase().endsWith(ext))) {
+    if (!ALLOWED_EXTENSIONS.some((ext) => req.file!.originalname.toLowerCase().endsWith(ext))) {
+      logger.warn({ userId: user.id, filename: req.file!.originalname }, "Unsupported file type")
       return jsonError(res, "INVALID_FILE_TYPE", "Supported file types are .xlsx, .xls, .csv, .tsv, and .ods.", 400)
     }
 
@@ -54,11 +51,13 @@ router.post("/", async (req, res) => {
     const template = store.getTemplate(user.id, options.template_id)
 
     if (!template) {
+      logger.warn({ userId: user.id, templateId: options.template_id }, "Template not found for upload")
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Select a valid cleaning template.", 404)
     }
 
     const importId = crypto.randomUUID()
-    const validation = parseWorkbook(f.buffer, {
+    logger.info({ userId: user.id, importId, filename: req.file!.originalname, templateId: template.id }, "File upload started")
+    const validation = parseWorkbook(new Uint8Array(req.file!.buffer).buffer as ArrayBuffer, {
       importId,
       removeBlankRows: options.remove_blank_rows,
       dashValuesBlank: options.dash_values_blank,
@@ -66,7 +65,7 @@ router.post("/", async (req, res) => {
     const job = store.createImport(user.id, {
       id: importId,
       templateId: template.id,
-      fileName: f.originalname,
+      fileName: req.file!.originalname,
       rows: validation.rows,
       sheets: validation.sheets,
       blankRowsRemoved: validation.blank_rows_removed,
@@ -75,6 +74,7 @@ router.post("/", async (req, res) => {
     await setCache(cacheKeys(importId).raw, validation.rows)
     await setCache(cacheKeys(importId).validation, validation)
 
+    logger.info({ userId: user.id, importId, totalRows: validation.rows.length }, "File upload completed")
     return jsonOk(res, {
       import: job,
       validation,
@@ -92,6 +92,7 @@ router.get("/:id", async (req, res) => {
     const job = store.getImport(user.id, id)
 
     if (!job) {
+      logger.warn({ userId: user.id, importId: id }, "Import not found")
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
@@ -117,16 +118,19 @@ router.post("/:id/validate", async (req, res) => {
     const job = store.getImport(user.id, id)
 
     if (!job) {
+      logger.warn({ userId: user.id, importId: id }, "Import not found for validation")
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
     const validation = await getCache<ValidationResult>(cacheKeys(id).validation)
 
     if (!validation) {
+      logger.warn({ importId: id }, "Validation expired")
       return jsonError(res, "VALIDATION_EXPIRED", "The validation preview expired. Upload the file again.", 410)
     }
 
     store.setStatus(user.id, id, "validated")
+    logger.info({ userId: user.id, importId: id }, "Import validated")
 
     return jsonOk(res, { validation })
   } catch (error) {
@@ -142,6 +146,7 @@ router.post("/:id/process", async (req, res) => {
     const job = store.getImport(user.id, id)
 
     if (!job) {
+      logger.warn({ userId: user.id, importId: id }, "Import not found for processing")
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
@@ -149,10 +154,12 @@ router.post("/:id/process", async (req, res) => {
     const rows = await getCache<RawImportRow[]>(cacheKeys(id).raw)
 
     if (!template || !rows) {
+      logger.warn({ importId: id }, "Preview expired during process")
       return jsonError(res, "PREVIEW_EXPIRED", "Raw preview data expired. Upload the file again.", 410)
     }
 
     if (body.force) {
+      logger.info({ importId: id }, "Force re-processing, invalidating cache")
       await invalidateImportCache(id)
     }
 
@@ -165,6 +172,7 @@ router.post("/:id/process", async (req, res) => {
       sheets: store.listSheets(id),
     })
 
+    logger.info({ importId: id, modelUsed: result.modelUsed, batches: result.batches.length, rows: result.rows.length }, "Processing complete")
     return jsonOk(res, {
       import_id: id,
       model_used: result.modelUsed,
@@ -199,6 +207,8 @@ router.get("/:id/stream", async (req, res) => {
     let missingCount = 0
     let skippedCount = 0
     let aiChangedCount = 0
+
+    logger.info({ importId: id, totalBatches }, "Starting SSE stream")
 
     for (let batchNo = 1; batchNo <= totalBatches; batchNo += 1) {
       const batch = await getCache<AiBatchResult>(cacheKeys(id).batch(batchNo))
@@ -239,6 +249,7 @@ router.get("/:id/stream", async (req, res) => {
     })}\n\n`)
 
     res.end()
+    logger.info({ importId: id }, "SSE stream complete")
   } catch (error) {
     return handleRouteError(res, error)
   }
@@ -255,6 +266,7 @@ router.get("/:id/results", async (req, res) => {
     }
 
     const rows = await getProcessedRows(id, job.updated_at)
+    logger.debug({ importId: id, rowCount: rows.length }, "Returning processed results")
 
     return jsonOk(res, { rows })
   } catch (error) {
@@ -283,6 +295,7 @@ router.post("/:id/save", async (req, res) => {
       fixed_missing_count: selectedRows.filter((row) => row.status === "good" && row.missing_fields.length > 0).length,
     })
 
+    logger.info({ importId: id, savedCount: savedRows.length }, "Rows saved")
     return jsonOk(res, { saved_rows: savedRows.length })
   } catch (error) {
     return handleRouteError(res, error)
@@ -311,6 +324,7 @@ router.post("/:id/export/excel", async (req, res) => {
         ? JSON.stringify(row.cleaned_data).toLowerCase().includes(body.search.toLowerCase())
         : true
     )
+    logger.info({ importId: id, mode: body.mode, rowCount: rows.length }, "Exporting to Excel")
     const buffer = buildExcelExport({
       rows,
       template,
@@ -347,6 +361,7 @@ router.post("/:id/export/google-sheet", async (req, res) => {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)
     }
 
+    logger.info({ importId: id, spreadsheetId: body.spreadsheet_id }, "Exporting to Google Sheets")
     const result = await exportRowsToGoogleSheet({
       spreadsheetId: body.spreadsheet_id,
       sheetName: body.sheet_name,

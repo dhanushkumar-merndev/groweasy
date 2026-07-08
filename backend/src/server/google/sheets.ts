@@ -1,12 +1,15 @@
 import { google } from "googleapis"
 
 import type { SavedRow, Template } from "../../lib/types.js"
+import { logger } from "../../lib/logger.js"
 
 export function isGoogleSheetsConfigured() {
-  return Boolean(
+  const configured = Boolean(
     process.env.GOOGLE_SHEETS_CLIENT_EMAIL &&
       process.env.GOOGLE_SHEETS_PRIVATE_KEY
   )
+  logger.debug({ configured }, "Google Sheets configuration check")
+  return configured
 }
 
 export async function exportRowsToGoogleSheet(input: {
@@ -16,6 +19,7 @@ export async function exportRowsToGoogleSheet(input: {
   template: Template
 }) {
   if (!isGoogleSheetsConfigured()) {
+    logger.warn("Google Sheets not configured, skipping export")
     return {
       configured: false,
       spreadsheet_id: input.spreadsheetId ?? null,
@@ -33,6 +37,7 @@ export async function exportRowsToGoogleSheet(input: {
   const spreadsheetId = input.spreadsheetId
 
   if (!spreadsheetId) {
+    logger.info("No spreadsheet ID provided for export")
     return {
       configured: true,
       spreadsheet_id: null,
@@ -47,12 +52,14 @@ export async function exportRowsToGoogleSheet(input: {
     ),
   ]
 
+  logger.info({ spreadsheetId, sheetName: input.sheetName, rowCount: input.rows.length }, "Exporting rows to Google Sheets")
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${input.sheetName}!A1`,
     valueInputOption: "RAW",
     requestBody: { values },
   })
+  logger.info({ spreadsheetId, rowCount: input.rows.length }, "Google Sheets export completed")
 
   return {
     configured: true,
@@ -63,6 +70,7 @@ export async function exportRowsToGoogleSheet(input: {
 
 export async function importRowsFromGoogleSheet() {
   if (!isGoogleSheetsConfigured()) {
+    logger.warn("Google Sheets not configured, skipping import")
     return {
       configured: false,
       rows: [],
