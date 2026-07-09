@@ -2,8 +2,6 @@ import { Router } from "express"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 
 import { auth, isAuthConfigured } from "../server/auth/auth.js"
-import { isSupabaseConfigured } from "../server/db/supabase.js"
-import { isGoogleSheetsConfigured } from "../server/google/sheets.js"
 import { demoUserId } from "../lib/data/sample-data.js"
 import { store } from "../server/repositories/store.js"
 import { handleRouteError, jsonOk } from "../server/api.js"
@@ -14,8 +12,6 @@ const router = Router()
 router.get("/config", (_req, res) => {
   return jsonOk(res, {
     auth: isAuthConfigured(),
-    supabase: isSupabaseConfigured(),
-    google_sheets: isGoogleSheetsConfigured(),
     redis: Boolean(process.env.UPSTASH_REDIS_REST_URL ?? process.env.REDIS_URL),
     groq: Boolean(
       process.env.GROQ_MODEL_1 ??

@@ -39,8 +39,12 @@ export async function addHistoryEntry(
       `INSERT INTO history_logs (user_id, import_id, action, meta) VALUES ($1, $2, $3, $4)`,
       [userId, importId ?? null, action, JSON.stringify(meta)],
     )
-  } catch (error) {
-    logger.warn({ error, action }, "Failed to insert history entry to DB")
+  } catch (error: any) {
+    if (error?.code === "23503") {
+      logger.debug({ action, importId }, "Skipped DB history — import not synced to DB yet")
+    } else {
+      logger.warn({ error, action }, "Failed to insert history entry to DB")
+    }
   }
 }
 

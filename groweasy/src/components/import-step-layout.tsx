@@ -43,6 +43,7 @@ export function ImportStepLayout({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [localProgressStep, setLocalProgressStep] = useState(0)
+  const [navigatingIndex, setNavigatingIndex] = useState<number | null>(null)
 
   // Track previous step for animation direction
   const prevStepRef = useRef<number>(currentStep)
@@ -56,6 +57,7 @@ export function ImportStepLayout({
     const dir = currentStep > prevStepRef.current ? 1 : -1
     directionRef.current = dir
     prevStepRef.current = currentStep
+    setNavigatingIndex(null)
 
     // Phase 1 – exit current content
     setAnimState("exit")
@@ -157,12 +159,14 @@ export function ImportStepLayout({
     return () => window.cancelAnimationFrame(frame)
   }, [currentStep, importId])
 
-  const handleNavigate = (href: string) => {
+  const handleNavigate = (href: string, index: number) => {
     if (isPending) return
+    setNavigatingIndex(index)
     startTransition(() => {
       router.push(href)
     })
   }
+
 
   const progressStep = Math.max(getProgressStep(importStatus), localProgressStep)
   const maxUnlockedStep = importId
@@ -171,7 +175,7 @@ export function ImportStepLayout({
 
   return (
     <>
-    <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] overflow-x-clip">
+    <div className="grid flex-1 gap-4 lg:grid-cols-[220px_minmax(0,1fr)] auto-rows-[minmax(0,1fr)]">
       <MobileStepper currentStep={currentStep} />
 
       {/* ── Sidebar ── */}
@@ -202,7 +206,7 @@ export function ImportStepLayout({
                   !href && "cursor-default opacity-40",
                 )}
               >
-                {/* Step number / check */}
+                {/* Step number / check / loader */}
                 <span
                   className={cn(
                     "flex size-5 items-center justify-center rounded-full text-[0.65rem] font-bold shrink-0",
@@ -210,9 +214,16 @@ export function ImportStepLayout({
                     isActive    && "border-sidebar-accent-foreground/50 bg-sidebar-accent-foreground/10 text-sidebar-accent-foreground scale-110",
                     isCompleted && "border-transparent bg-primary/20 text-primary",
                     !isActive && !isCompleted && "border-border/60",
+                    navigatingIndex === index && "animate-pulse",
                   )}
                 >
-                  {isCompleted ? <CheckIcon className="size-3" /> : index + 1}
+                  {navigatingIndex === index ? (
+                    <Loader2Icon className="size-3 animate-spin" />
+                  ) : isCompleted ? (
+                    <CheckIcon className="size-3" />
+                  ) : (
+                    index + 1
+                  )}
                 </span>
                 {step.label}
               </div>
@@ -221,12 +232,12 @@ export function ImportStepLayout({
             return href ? (
               <div
                 key={step.label}
-                onClick={() => handleNavigate(href)}
+                onClick={() => handleNavigate(href, index)}
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault()
-                    handleNavigate(href)
+                    handleNavigate(href, index)
                   }
                 }}
                 className="outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg cursor-pointer"
@@ -241,7 +252,7 @@ export function ImportStepLayout({
       </aside>
 
       {/* ── Main content with slide transitions ── */}
-      <section className="min-w-0 pb-20 md:pb-0 relative overflow-hidden min-h-[300px] flex flex-col justify-between">
+      <section className="min-w-0 pb-20 md:pb-0 relative flex flex-col min-h-[300px]">
         {isPending && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-[1px] animate-in fade-in duration-200">
             <div className="flex flex-col items-center gap-2">
@@ -251,7 +262,7 @@ export function ImportStepLayout({
           </div>
         )}
         <div
-          className="flex-1 flex flex-col justify-between"
+          className="flex flex-1 flex-col min-h-0"
           style={{
             willChange: "transform, opacity",
             transition: animState === "idle" ? "none" : "transform 280ms cubic-bezier(0.4,0,0.2,1), opacity 280ms ease",
@@ -264,7 +275,7 @@ export function ImportStepLayout({
             opacity: animState === "idle" ? 1 : 0,
           }}
         >
-          <div className="flex-1">{children}</div>
+          <div className="flex flex-1 flex-col">{children}</div>
 
           {/* Desktop action buttons */}
           {(primaryAction || secondaryAction) && (

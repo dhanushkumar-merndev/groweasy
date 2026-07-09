@@ -5,6 +5,7 @@ import { cleanBatchRequestSchema, cleanBatchResultSchema } from "../lib/schemas.
 import { normalizeKey } from "../lib/formatting.js"
 import { handleRouteError, jsonOk, parseJsonBody } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
+import { getUserDecryptedKey } from "./settings.js"
 import { logger } from "../lib/logger.js"
 
 type CleanBatchRequest = z.infer<typeof cleanBatchRequestSchema>
@@ -48,11 +49,13 @@ Return the same clean batch schema with batch_id, good_rows, missing_rows, skipp
 
 router.post("/", async (req, res) => {
   try {
-    await requireCurrentUser(req)
+    const user = await requireCurrentUser(req)
 
     const batch = parseJsonBody(req.body, cleanBatchRequestSchema)
     logger.info({ batchId: batch.batch_id, rowCount: batch.rows.length }, "Clean batch request received")
-    const apiKeys = getGroqApiKeys()
+
+    const userKey = getUserDecryptedKey(user.id)
+    const apiKeys = userKey ? [userKey.key, ...getGroqApiKeys()] : getGroqApiKeys()
     const fieldMap = await inferFieldMap(batch, apiKeys)
     const deterministicResult = cleanRowsWithFieldMap(batch, fieldMap)
     const result = await retryUnclearRowsWithGroq(batch, deterministicResult, fieldMap, apiKeys)

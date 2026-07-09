@@ -84,7 +84,7 @@ type TokenUsage = {
   total_tokens: number
 }
 
-const MAX_VISIBLE_ACTIVITY = 5
+const MAX_VISIBLE_ACTIVITY = 4
 
 export function ProcessingStreamPanel({ importId }: { importId: string }) {
   const router = useRouter()
@@ -308,7 +308,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
         <CardDescription>Rows are processed in configurable batches and streamed as each batch completes.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6">
-        <div className="grid min-h-[42vh] gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:items-center">
+        <div className="grid min-h-[42vh] gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
           <div className="grid content-center justify-items-center gap-5">
           <div className="size-48 sm:size-56">
             <Lottie animationData={loaderAnimation} loop={pending || redirectSeconds !== null} />
@@ -442,7 +442,7 @@ function LiveActivity({
   tokenUsage: TokenUsage | null
 }) {
   return (
-    <div className="grid min-h-[300px] content-start gap-3 rounded-lg border bg-background/45 p-3">
+    <div className="grid h-full content-start gap-3 rounded-lg border bg-background/45 p-3 overflow-auto">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <RadioIcon className={pending ? "size-4 animate-pulse text-primary" : "size-4 text-muted-foreground"} />
@@ -472,19 +472,16 @@ function LiveActivity({
         </div>
       </div>
 
-      <div className="relative grid max-h-[390px] gap-2 overflow-hidden">
+      <div className="grid gap-2">
         {items.slice(0, MAX_VISIBLE_ACTIVITY).map((item, index) => (
           <div
             key={item.id}
             className={cn(
-              "animate-slide-up-fade grid grid-cols-[28px_1fr] gap-2 rounded-md border bg-card/70 p-2.5",
+              "grid grid-cols-[28px_1fr] gap-2 rounded-md border bg-card/70 p-2.5",
               index === 0 && "ring-1 ring-primary/25",
               index === 1 && "opacity-90",
               index === 2 && "opacity-75",
-              index === 3 && "opacity-55",
-              index >= 4 && "opacity-30",
             )}
-            style={{ animationDelay: `${Math.min(index, 4) * 24}ms` }}
           >
             <div className="mt-0.5 flex size-7 items-center justify-center rounded-md bg-primary/10 text-primary">
               <ActivityIcon kind={item.kind} />
@@ -495,7 +492,6 @@ function LiveActivity({
             </div>
           </div>
         ))}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-background/90 to-transparent" />
       </div>
     </div>
   )

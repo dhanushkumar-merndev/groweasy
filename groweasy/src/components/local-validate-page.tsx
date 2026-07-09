@@ -54,11 +54,11 @@ export function LocalValidatePage({ importId }: { importId: string }) {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="relative flex flex-1 flex-col">
       <Button
         variant="ghost"
         size="sm"
-        className="w-fit text-muted-foreground hover:text-foreground"
+        className="absolute left-0 top-0 z-10 w-fit text-muted-foreground hover:text-foreground"
         render={<Link href={`/upload/${importId}`} />}
       >
         <ArrowLeftIcon className="size-4" />

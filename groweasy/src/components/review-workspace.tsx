@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react"
 
 import { DataGrid } from "@/components/data-grid"
@@ -35,6 +36,14 @@ export function ReviewWorkspace({
 }
 
 export function ReviewNav({ importId }: { importId: string }) {
+  const router = useRouter()
+  const [loading, setLoading] = useState(false)
+
+  const handleNext = useCallback(() => {
+    setLoading(true)
+    setTimeout(() => router.push(`/upload/${importId}/export`), 300)
+  }, [importId, router])
+
   return (
     <div className="flex items-center justify-between gap-3">
       <Button
@@ -46,9 +55,17 @@ export function ReviewNav({ importId }: { importId: string }) {
         <ArrowLeftIcon className="size-4" />
         Back
       </Button>
-      <Button size="sm" render={<Link href={`/upload/${importId}/export`} />}>
-        Next
-        <ArrowRightIcon className="size-4" />
+      <Button size="sm" disabled={loading} onClick={handleNext}>
+        {loading ? (
+          <>
+            <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          </>
+        ) : (
+          <>
+            Next
+            <ArrowRightIcon className="size-4" />
+          </>
+        )}
       </Button>
     </div>
   )

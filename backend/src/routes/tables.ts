@@ -8,6 +8,23 @@ import { logger } from "../lib/logger.js"
 
 const router = Router()
 
+router.get("/all", async (req, res) => {
+  try {
+    const user = await requireCurrentUser(req)
+    const rows = store.listAllSavedRows(user.id)
+    const columns = new Set<string>()
+    for (const row of rows) {
+      for (const key of Object.keys(row.cleaned_data)) {
+        columns.add(key)
+      }
+    }
+    logger.debug({ userId: user.id, rows: rows.length, columns: columns.size }, "List all campaign rows")
+    return jsonOk(res, { rows, columns: [...columns] })
+  } catch (error) {
+    return handleRouteError(res, error)
+  }
+})
+
 router.get("/:importId/rows", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)

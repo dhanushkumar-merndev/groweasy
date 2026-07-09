@@ -1,7 +1,9 @@
 "use client"
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import {
+  ArrowRightIcon,
   CheckCircle2Icon,
   Loader2Icon,
 } from "lucide-react"
@@ -9,8 +11,6 @@ import { cn } from "@/lib/utils"
 import type { ImportSheet, RawImportRow, ValidationWarning } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { normalizeLocalValidationRows, saveLocalValidationPreview } from "@/lib/local-validation-preview"
-
-const viewportCenterClass = "lg:-translate-x-[118px]"
 
 function StepRow({
   label, detail, state,
@@ -242,8 +242,7 @@ export function ValidateClient({
     return (
       <div
         className={cn(
-          "grid min-h-[58vh] content-center justify-items-center gap-3 animate-in fade-in duration-500 transition-transform ease-out",
-          viewportCenterClass,
+          "flex flex-1 flex-col justify-center items-center gap-3 animate-in fade-in duration-500",
           questionStep > 0 && "-translate-y-2",
         )}
       >
@@ -265,7 +264,7 @@ export function ValidateClient({
 
   if (phase === "cleaning") {
     return (
-      <div className={cn("grid min-h-[58vh] content-center justify-items-center gap-2 animate-in fade-in duration-500 ease-out -translate-y-2", viewportCenterClass)}>
+      <div className={cn("flex flex-1 flex-col justify-center items-center gap-2 animate-in fade-in duration-500 ease-out -translate-y-2")}>
         <div className="w-full max-w-xl space-y-2">
           {setupQuestions.map((question) => (
             <QuestionOption
@@ -292,7 +291,7 @@ export function ValidateClient({
   }
 
   return (
-    <div className={cn("grid min-h-[58vh] content-center justify-items-center gap-2 animate-in fade-in duration-500 ease-out -translate-y-2", viewportCenterClass)}>
+      <div className={cn("flex flex-1 flex-col justify-center items-center gap-2 animate-in fade-in duration-500 ease-out -translate-y-2")}>
       <div className="w-full max-w-xl space-y-2">
         {setupQuestions.map((question) => (
           <QuestionOption
@@ -314,6 +313,13 @@ export function ValidateClient({
           />
         ))}
       </div>
+      <Button
+        className="w-full max-w-xl"
+        render={<Link href={`/upload/${importId}/preview`} />}
+      >
+        Continue to preview
+        <ArrowRightIcon />
+      </Button>
     </div>
   )
 }

@@ -15,6 +15,7 @@ import {
 } from "./prompts/excel-cleaner.js"
 import { cacheKeys, getCache, setCache } from "../redis/cache.js"
 import { store } from "../repositories/store.js"
+import { getUserDecryptedKey } from "../../routes/settings.js"
 import { summarizeCleanedRows } from "../imports/summary.js"
 import { logger } from "../../lib/logger.js"
 
@@ -58,10 +59,11 @@ export async function processImportRows(input: {
 }) {
   const batches: AiBatchResult[] = []
   const rowBatches = chunk(input.rows, batchSize)
-  const groqApiKey = process.env.GROQ_API_KEY ?? process.env.GROQ_MODEL_1 ?? process.env.GROQ_MODEL_2 ?? process.env.GROQ_MODEL_3
+  const userKey = getUserDecryptedKey(input.userId)
+  const groqApiKey = userKey?.key ?? process.env.GROQ_API_KEY ?? process.env.GROQ_MODEL_1 ?? process.env.GROQ_MODEL_2 ?? process.env.GROQ_MODEL_3
   const groq = groqApiKey ? new Groq({ apiKey: groqApiKey }) : null
   const allRows: CleanedRow[] = []
-  let modelUsed = groq ? primaryModel : "demo-local-cleaner"
+  let modelUsed = groq ? (userKey?.model || primaryModel) : "demo-local-cleaner"
   const tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
 
   logger.info({ importId: input.importId, totalRows: input.rows.length, batchSize, totalBatches: rowBatches.length }, "Starting AI processing")

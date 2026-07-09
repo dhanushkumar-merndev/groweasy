@@ -22,6 +22,14 @@ import { invalidateAnalyticsCache, invalidateImportCache } from "../redis/cache.
 import { logger } from "../../lib/logger.js"
 import { ensureSchema, addHistoryEntry, listHistoryEntries } from "../db/db-history.js"
 
+type Campaign = {
+  id: string
+  user_id: string
+  name: string
+  rowIds: string[]
+  created_at: string
+}
+
 type StoreState = {
   templates: Template[]
   imports: ImportJob[]
@@ -30,6 +38,7 @@ type StoreState = {
   savedRows: SavedRow[]
   history: HistoryLog[]
   userApiKeys: Record<string, string>
+  campaigns: Campaign[]
 }
 
 const storeFilePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.data/store-state.json")
@@ -43,6 +52,7 @@ function defaultState(): StoreState {
     savedRows: [],
     history: [],
     userApiKeys: {},
+    campaigns: [],
   }
 }
 
@@ -61,6 +71,7 @@ function loadState(): StoreState {
       savedRows: parsed.savedRows ?? [],
       history: parsed.history ?? [],
       userApiKeys: parsed.userApiKeys ?? {},
+      campaigns: parsed.campaigns ?? [],
     }
   } catch (error) {
     logger.warn({ error }, "Failed to load local store state, starting fresh")
@@ -261,6 +272,12 @@ export const store = {
     return rows
   },
 
+  listAllSavedRows(userId: string) {
+    const rows = state.savedRows.filter((row) => row.user_id === userId || row.user_id === demoUserId)
+    logger.debug({ userId, count: rows.length }, "List all saved rows")
+    return rows
+  },
+
   appendSavedRow(userId: string, importId: string, input: {
     sheet_name: string
     sheet_index: number
@@ -406,5 +423,47 @@ export const store = {
     } catch {
       return null
     }
+  },
+
+  listCampaigns(userId: string) {
+    return state.campaigns.filter((c) => c.user_id === userId || c.user_id === demoUserId)
+  },
+
+  createCampaign(userId: string, name: string) {
+    const campaign: Campaign = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      name,
+      rowIds: [],
+      created_at: new Date().toISOString(),
+    }
+    state.campaigns.push(campaign)
+    persistState()
+    logger.info({ userId, campaignId: campaign.id }, "Campaign created")
+    return campaign
+  },
+
+  deleteCampaign(userId: string, campaignId: string) {
+    state.campaigns = state.campaigns.filter((c) => !(c.id === campaignId && (c.user_id === userId || c.user_id === demoUserId)))
+    persistState()
+    logger.info({ userId, campaignId }, "Campaign deleted")
+  },
+
+  addRowToCampaign(userId: string, campaignId: string, rowId: string) {
+    const campaign = state.campaigns.find((c) => c.id === campaignId && (c.user_id === userId || c.user_id === demoUserId))
+    if (!campaign) return false
+    if (!campaign.rowIds.includes(rowId)) {
+      campaign.rowIds.push(rowId)
+      persistState()
+    }
+    return true
+  },
+
+  removeRowFromCampaign(userId: string, campaignId: string, rowId: string) {
+    const campaign = state.campaigns.find((c) => c.id === campaignId && (c.user_id === userId || c.user_id === demoUserId))
+    if (!campaign) return false
+    campaign.rowIds = campaign.rowIds.filter((id) => id !== rowId)
+    persistState()
+    return true
   },
 }

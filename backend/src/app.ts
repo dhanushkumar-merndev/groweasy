@@ -12,6 +12,7 @@ import analyticsRoutes from "./routes/analytics.js"
 import googleSheetsRoutes from "./routes/google-sheets.js"
 import historyRoutes from "./routes/history.js"
 import settingsRoutes from "./routes/settings.js"
+import campaignRoutes from "./routes/campaigns.js"
 import { logger } from "./lib/logger.js"
 
 const app = express()
@@ -66,6 +67,7 @@ app.use("/api/analytics", limiter, analyticsRoutes)
 app.use("/api/google-sheets", limiter, googleSheetsRoutes)
 app.use("/api/history", limiter, historyRoutes)
 app.use("/api/settings", limiter, settingsRoutes)
+app.use("/api/campaigns", limiter, campaignRoutes)
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() })
