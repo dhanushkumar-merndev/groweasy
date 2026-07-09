@@ -1,9 +1,9 @@
 import { Router } from "express"
 import multer from "multer"
 
-import { uploadOptionsSchema, processImportSchema, saveImportSchema, exportExcelSchema, googleSheetExportSchema } from "../lib/schemas.js"
-import type { AiBatchResult, RawImportRow, ValidationResult } from "../lib/types.js"
-import { cacheKeys, getCache, invalidateImportCache, setCache } from "../server/redis/cache.js"
+import { uploadOptionsSchema, processImportSchema, saveImportSchema, exportExcelSchema, googleSheetExportSchema, validateImportSchema } from "../lib/schemas.js"
+import type { ImportSheet, RawImportRow, ValidationResult, ValidationWarning } from "../lib/types.js"
+import { cacheKeys, getCache, invalidateProcessedImportCache, setCache } from "../server/redis/cache.js"
 import { handleRouteError, jsonError, jsonOk, parseJsonBody } from "../server/api.js"
 import { parseWorkbook } from "../server/imports/parser.js"
 import { requireCurrentUser } from "../middleware/auth.js"
@@ -85,6 +85,126 @@ router.post("/", upload.single("file"), async (req, res) => {
   }
 })
 
+router.post("/batch", async (req, res) => {
+  try {
+    const user = await requireCurrentUser(req)
+
+    const templateId = req.body.template_id
+    const fileName = req.body.file_name || "Grow Easy CRM"
+    const rawRows = req.body.rows || []
+    const sheets = req.body.sheets || []
+    const blankRowsRemoved = req.body.blank_rows_removed || 0
+    const removeBlankRows = req.body.remove_blank_rows !== false
+    const dashValuesBlank = req.body.dash_values_blank !== false
+    const requireBothEmailPhone = req.body.require_both_email_phone === true
+
+    const template = store.getTemplate(user.id, templateId)
+
+    if (!template) {
+      logger.warn({ userId: user.id, templateId }, "Template not found for batch upload")
+      return jsonError(res, "TEMPLATE_NOT_FOUND", "Select a valid cleaning template.", 404)
+    }
+
+    const importId = req.body.id || crypto.randomUUID()
+    logger.info({ userId: user.id, importId, filename: fileName, templateId }, "Batch import started")
+
+    const mappedRows: RawImportRow[] = rawRows.map((row: any) => {
+      const sheetIndex = typeof row.sheet_index === "number" ? row.sheet_index : typeof row.source_sheet_index === "number" ? row.source_sheet_index : 0
+      const rowIndex = typeof row.row_index === "number" ? row.row_index : typeof row.source_row_index === "number" ? row.source_row_index : 1
+      const sheetName = row.sheet_name || row.source_sheet || "Upload"
+
+      return {
+        id: row.id || `${importId}_${sheetIndex}_${rowIndex}`,
+        import_id: importId,
+        sheet_id: row.sheet_id || `${importId}_sheet_${sheetIndex + 1}`,
+        sheet_name: sheetName,
+        sheet_index: sheetIndex,
+        row_index: rowIndex,
+        raw_data: row.raw_data || row.data || {},
+      }
+    })
+
+    const mappedSheets: ImportSheet[] = sheets.map((sheet: any, idx: number) => ({
+      id: sheet.id || `${importId}_sheet_${typeof sheet.sheet_index === "number" ? sheet.sheet_index + 1 : idx + 1}`,
+      import_id: importId,
+      sheet_name: sheet.sheet_name || sheet.name || `Sheet ${idx + 1}`,
+      sheet_index: typeof sheet.sheet_index === "number" ? sheet.sheet_index : idx,
+      total_rows: sheet.total_rows || sheet.rows || 0,
+      good_count: 0,
+      missing_count: 0,
+      skipped_count: 0,
+      created_at: new Date().toISOString(),
+    }))
+
+    const existingJob = store.getImport(user.id, importId)
+
+    if (existingJob) {
+      logger.info({ userId: user.id, importId }, "Import already exists, updating cache")
+      await setCache(cacheKeys(importId).raw, mappedRows)
+      await setCache(cacheKeys(importId).validation, {
+        import_id: importId,
+        rows: mappedRows,
+        sheets: mappedSheets,
+        warnings: [],
+        blank_rows_removed: blankRowsRemoved,
+        total_rows: mappedRows.length,
+        remove_blank_rows: removeBlankRows,
+        dash_values_blank: dashValuesBlank,
+        require_both_email_phone: requireBothEmailPhone,
+      })
+      return jsonOk(res, {
+        import: existingJob,
+        validation: {
+          import_id: importId,
+          rows: mappedRows,
+          sheets: mappedSheets,
+          warnings: [],
+          blank_rows_removed: blankRowsRemoved,
+          total_rows: mappedRows.length,
+          remove_blank_rows: removeBlankRows,
+          dash_values_blank: dashValuesBlank,
+          require_both_email_phone: requireBothEmailPhone,
+        },
+        next: `/upload/${importId}/validate`,
+      })
+    }
+
+    const job = store.createImport(user.id, {
+      id: importId,
+      templateId,
+      fileName,
+      rows: mappedRows,
+      sheets: mappedSheets,
+      blankRowsRemoved,
+    })
+
+    await setCache(cacheKeys(importId).raw, mappedRows)
+
+    const validation = {
+      import_id: importId,
+      rows: mappedRows,
+      sheets: mappedSheets,
+      warnings: [],
+      blank_rows_removed: blankRowsRemoved,
+      total_rows: mappedRows.length,
+      remove_blank_rows: removeBlankRows,
+      dash_values_blank: dashValuesBlank,
+      require_both_email_phone: requireBothEmailPhone,
+    }
+    await setCache(cacheKeys(importId).validation, validation)
+
+    logger.info({ userId: user.id, importId, totalRows: mappedRows.length }, "Batch import completed")
+    return jsonOk(res, {
+      import: job,
+      validation,
+      next: `/upload/${importId}/validate`,
+    })
+  } catch (error) {
+    return handleRouteError(res, error)
+  }
+})
+
+
 router.get("/:id", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
@@ -96,7 +216,7 @@ router.get("/:id", async (req, res) => {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
-    const validation = await getCache<ValidationResult>(cacheKeys(id).validation, job.updated_at)
+    const validation = await getCache<ValidationResult>(cacheKeys(id).validation)
 
     return jsonOk(res, {
       import: job,
@@ -129,14 +249,106 @@ router.post("/:id/validate", async (req, res) => {
       return jsonError(res, "VALIDATION_EXPIRED", "The validation preview expired. Upload the file again.", 410)
     }
 
-    store.setStatus(user.id, id, "validated")
+    const body = parseJsonBody(req.body ?? {}, validateImportSchema)
+    const rows = body.rows?.map((row) => ({
+      ...row,
+      import_id: id,
+      sheet_id: row.sheet_id.startsWith("_sheet_") ? `${id}_sheet_${row.sheet_index + 1}` : row.sheet_id,
+    })) ?? validation.rows
+    const blankRowsRemoved = body.rows ? body.blank_rows_removed : validation.blank_rows_removed
+    const removeBlankRows = body.rows ? body.remove_blank_rows : validation.remove_blank_rows
+    const dashValuesBlank = body.rows ? body.dash_values_blank : validation.dash_values_blank
+    const requireBothEmailPhone = body.rows ? body.require_both_email_phone : validation.require_both_email_phone
+    const sheets = body.rows ? summarizeSheets(validation.sheets, rows) : validation.sheets
+    const warnings = mergeBlankRowWarning(validation.warnings, blankRowsRemoved)
+    const nextValidation: ValidationResult = {
+      ...validation,
+      rows,
+      sheets,
+      warnings,
+      blank_rows_removed: blankRowsRemoved,
+      total_rows: rows.length,
+      remove_blank_rows: removeBlankRows,
+      dash_values_blank: dashValuesBlank,
+      require_both_email_phone: requireBothEmailPhone,
+    }
+
+    store.setSheets(id, sheets)
+    store.updateImport(user.id, id, {
+      status: "validated",
+      total_rows: rows.length,
+      blank_rows_removed: blankRowsRemoved,
+      sheet_summary: sheets.map((sheet) => ({
+        sheet_id: sheet.id,
+        sheet_name: sheet.sheet_name,
+        sheet_index: sheet.sheet_index,
+        total_rows: sheet.total_rows,
+        good_count: sheet.good_count,
+        missing_count: sheet.missing_count,
+        skipped_count: sheet.skipped_count,
+      })),
+    })
+    await setCache(cacheKeys(id).raw, rows)
+    await setCache(cacheKeys(id).validation, nextValidation)
+
     logger.info({ userId: user.id, importId: id }, "Import validated")
 
-    return jsonOk(res, { validation })
+    return jsonOk(res, { validation: nextValidation })
   } catch (error) {
     return handleRouteError(res, error)
   }
 })
+
+function summarizeSheets(existingSheets: ImportSheet[], rows: RawImportRow[]) {
+  const counts = new Map<string, number>()
+  const rowSheets = new Map<string, Pick<ImportSheet, "id" | "import_id" | "sheet_name" | "sheet_index">>()
+
+  for (const row of rows) {
+    counts.set(row.sheet_id, (counts.get(row.sheet_id) ?? 0) + 1)
+    rowSheets.set(row.sheet_id, {
+      id: row.sheet_id,
+      import_id: row.import_id,
+      sheet_name: row.sheet_name,
+      sheet_index: row.sheet_index,
+    })
+  }
+
+  const sheetsById = new Map(existingSheets.map((sheet) => [sheet.id, sheet]))
+  const now = new Date().toISOString()
+
+  return [...counts.entries()]
+    .map(([sheetId, totalRows]) => {
+      const existingSheet = sheetsById.get(sheetId)
+      const rowSheet = rowSheets.get(sheetId)
+
+      return {
+        id: sheetId,
+        import_id: existingSheet?.import_id ?? rowSheet?.import_id ?? "",
+        sheet_name: existingSheet?.sheet_name ?? rowSheet?.sheet_name ?? "Upload",
+        sheet_index: existingSheet?.sheet_index ?? rowSheet?.sheet_index ?? 0,
+        total_rows: totalRows,
+        good_count: existingSheet?.good_count ?? 0,
+        missing_count: existingSheet?.missing_count ?? 0,
+        skipped_count: existingSheet?.skipped_count ?? 0,
+        created_at: existingSheet?.created_at ?? now,
+      }
+    })
+    .sort((left, right) => left.sheet_index - right.sheet_index)
+}
+
+function mergeBlankRowWarning(warnings: ValidationWarning[], blankRowsRemoved: number) {
+  const nextWarnings = warnings.filter((warning) => warning.code !== "blank_rows_removed")
+
+  if (blankRowsRemoved > 0) {
+    nextWarnings.push({
+      code: "blank_rows_removed",
+      message: `${blankRowsRemoved} blank row${blankRowsRemoved === 1 ? "" : "s"} removed.`,
+      count: blankRowsRemoved,
+    })
+  }
+
+  return nextWarnings
+}
 
 router.post("/:id/process", async (req, res) => {
   try {
@@ -152,6 +364,7 @@ router.post("/:id/process", async (req, res) => {
 
     const template = store.getTemplate(user.id, job.template_id)
     const rows = await getCache<RawImportRow[]>(cacheKeys(id).raw)
+    const validation = await getCache<ValidationResult>(cacheKeys(id).validation)
 
     if (!template || !rows) {
       logger.warn({ importId: id }, "Preview expired during process")
@@ -159,8 +372,8 @@ router.post("/:id/process", async (req, res) => {
     }
 
     if (body.force) {
-      logger.info({ importId: id }, "Force re-processing, invalidating cache")
-      await invalidateImportCache(id)
+      logger.info({ importId: id }, "Force re-processing, invalidating processed cache")
+      await invalidateProcessedImportCache(id)
     }
 
     store.setStatus(user.id, id, "processing")
@@ -170,14 +383,16 @@ router.post("/:id/process", async (req, res) => {
       template,
       rows,
       sheets: store.listSheets(id),
+      requireBothEmailPhone: validation?.require_both_email_phone ?? false,
     })
 
-    logger.info({ importId: id, modelUsed: result.modelUsed, batches: result.batches.length, rows: result.rows.length }, "Processing complete")
+    logger.info({ importId: id, modelUsed: result.modelUsed, batches: result.batches.length, rows: result.rows.length, tokenUsage: result.tokenUsage }, "Processing complete")
     return jsonOk(res, {
       import_id: id,
       model_used: result.modelUsed,
       batches: result.batches.length,
       rows: result.rows.length,
+      token_usage: result.tokenUsage,
     })
   } catch (error) {
     return handleRouteError(res, error)
@@ -194,7 +409,22 @@ router.get("/:id/stream", async (req, res) => {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
-    const totalBatches = Math.max(1, Math.ceil(job.total_rows / Number(process.env.AI_BATCH_SIZE ?? 75)))
+    const template = store.getTemplate(user.id, job.template_id)
+    const rows = await getCache<RawImportRow[]>(cacheKeys(id).raw)
+    const validation = await getCache<ValidationResult>(cacheKeys(id).validation)
+
+    if (!template || !rows) {
+      logger.warn({ importId: id }, "Preview expired during processing stream")
+      return jsonError(res, "PREVIEW_EXPIRED", "Raw preview data expired. Upload the file again.", 410)
+    }
+
+    if (req.query.force === "1" || req.query.force === "true") {
+      logger.info({ importId: id }, "Force streaming re-processing, invalidating processed cache")
+      await invalidateProcessedImportCache(id)
+    }
+
+    const totalBatches = Math.max(1, Math.ceil(rows.length / Number(process.env.AI_BATCH_SIZE ?? 75)))
+    const totalRows = rows.length
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -202,55 +432,94 @@ router.get("/:id/stream", async (req, res) => {
       Connection: "keep-alive",
     })
 
-    let processedRows = 0
+    store.setStatus(user.id, id, "processing")
+
     let goodCount = 0
     let missingCount = 0
     let skippedCount = 0
     let aiChangedCount = 0
+    let closed = false
+
+    req.on("close", () => {
+      closed = true
+    })
 
     logger.info({ importId: id, totalBatches }, "Starting SSE stream")
 
-    for (let batchNo = 1; batchNo <= totalBatches; batchNo += 1) {
-      const batch = await getCache<AiBatchResult>(cacheKeys(id).batch(batchNo))
+    const result = await processImportRows({
+      userId: user.id,
+      importId: id,
+      template,
+      rows,
+      sheets: store.listSheets(id),
+      requireBothEmailPhone: validation?.require_both_email_phone ?? false,
+      onBatchStart: async ({ batchNo, batchRows, aiRows, model }) => {
+        if (closed) return
 
-      if (!batch) {
-        continue
-      }
+        res.write(`data: ${JSON.stringify({
+          type: "batch_started",
+          batch_no: batchNo,
+          total_batches: totalBatches,
+          batch_rows: batchRows,
+          ai_rows: aiRows,
+          model,
+        })}\n\n`)
+      },
+      onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage }) => {
+        if (closed) return
 
-      processedRows += batch.rows.length
-      goodCount += batch.summary.good_count
-      missingCount += batch.summary.missing_count
-      skippedCount += batch.summary.skipped_count
-      aiChangedCount += batch.summary.ai_changed_count
+        goodCount += batch.summary.good_count
+        missingCount += batch.summary.missing_count
+        skippedCount += batch.summary.skipped_count
+        aiChangedCount += batch.summary.ai_changed_count
 
+        res.write(`data: ${JSON.stringify({
+          type: "batch_completed",
+          batch_no: batchNo,
+          total_batches: totalBatches,
+          good_count: goodCount,
+          missing_count: missingCount,
+          skipped_count: skippedCount,
+          ai_changed_count: aiChangedCount,
+        })}\n\n`)
+
+        res.write(`data: ${JSON.stringify({
+          type: "progress",
+          processed_rows: processedRows,
+          total_rows: totalRows,
+          percent: totalRows > 0 ? Math.round((processedRows / totalRows) * 100) : 100,
+        })}\n\n`)
+
+        res.write(`data: ${JSON.stringify({
+          type: "token_usage",
+          token_usage: tokenUsage,
+        })}\n\n`)
+      },
+    })
+
+    if (!closed) {
       res.write(`data: ${JSON.stringify({
-        type: "batch_completed",
-        batch_no: batchNo,
-        total_batches: totalBatches,
-        good_count: goodCount,
-        missing_count: missingCount,
-        skipped_count: skippedCount,
-        ai_changed_count: aiChangedCount,
+        type: "completed",
+        import_id: id,
+        token_usage: result.tokenUsage,
       })}\n\n`)
-
-      res.write(`data: ${JSON.stringify({
-        type: "progress",
-        processed_rows: processedRows,
-        total_rows: job.total_rows,
-        percent: job.total_rows > 0 ? Math.round((processedRows / job.total_rows) * 100) : 100,
-      })}\n\n`)
-
-      await wait(250)
     }
 
-    res.write(`data: ${JSON.stringify({
-      type: "completed",
-      import_id: id,
-    })}\n\n`)
-
-    res.end()
-    logger.info({ importId: id }, "SSE stream complete")
+    if (!closed) {
+      res.end()
+    }
+    logger.info({ importId: id, tokenUsage: result.tokenUsage }, "SSE stream complete")
   } catch (error) {
+    if (res.headersSent) {
+      logger.error({ err: error }, "SSE stream failed")
+      res.write(`data: ${JSON.stringify({
+        type: "error",
+        message: error instanceof Error ? error.message : "Processing failed.",
+      })}\n\n`)
+      res.end()
+      return
+    }
+
     return handleRouteError(res, error)
   }
 })
@@ -319,7 +588,25 @@ router.post("/:id/export/excel", async (req, res) => {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)
     }
 
-    const rows = store.listSavedRows(user.id, id).filter((row) =>
+    let rows = store.listSavedRows(user.id, id)
+
+    if (rows.length === 0) {
+      rows = store.listCleanedRows(id).map((row) => ({
+        id: row.id,
+        user_id: user.id,
+        import_id: id,
+        sheet_id: row.sheet_id,
+        sheet_name: row.sheet_name,
+        sheet_index: row.sheet_index,
+        row_index: row.row_index,
+        cleaned_data: row.cleaned_data,
+        ai_changes: row.ai_changes,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }))
+    }
+
+    rows = rows.filter((row) =>
       body.search
         ? JSON.stringify(row.cleaned_data).toLowerCase().includes(body.search.toLowerCase())
         : true
@@ -377,9 +664,3 @@ router.post("/:id/export/google-sheet", async (req, res) => {
 })
 
 export default router
-
-function wait(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
-}

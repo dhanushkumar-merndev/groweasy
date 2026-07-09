@@ -1,3 +1,7 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+
 import {
   demoUserId,
   sampleTemplates,
@@ -16,6 +20,7 @@ import type {
 } from "../../lib/types.js"
 import { invalidateAnalyticsCache, invalidateImportCache } from "../redis/cache.js"
 import { logger } from "../../lib/logger.js"
+import { ensureSchema, addHistoryEntry, listHistoryEntries } from "../db/db-history.js"
 
 type StoreState = {
   templates: Template[]
@@ -24,16 +29,73 @@ type StoreState = {
   cleanedRows: CleanedRow[]
   savedRows: SavedRow[]
   history: HistoryLog[]
+  userApiKeys: Record<string, string>
 }
 
-const state: StoreState = {
-  templates: [...sampleTemplates],
-  imports: [],
-  sheets: [],
-  cleanedRows: [],
-  savedRows: [],
-  history: [],
+const storeFilePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.data/store-state.json")
+
+function defaultState(): StoreState {
+  return {
+    templates: [...sampleTemplates],
+    imports: [],
+    sheets: [],
+    cleanedRows: [],
+    savedRows: [],
+    history: [],
+    userApiKeys: {},
+  }
 }
+
+function loadState(): StoreState {
+  if (!existsSync(storeFilePath)) {
+    return defaultState()
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(storeFilePath, "utf8")) as Partial<StoreState>
+    return {
+      templates: parsed.templates?.length ? parsed.templates : [...sampleTemplates],
+      imports: parsed.imports ?? [],
+      sheets: parsed.sheets ?? [],
+      cleanedRows: parsed.cleanedRows ?? [],
+      savedRows: parsed.savedRows ?? [],
+      history: parsed.history ?? [],
+      userApiKeys: parsed.userApiKeys ?? {},
+    }
+  } catch (error) {
+    logger.warn({ error }, "Failed to load local store state, starting fresh")
+    return defaultState()
+  }
+}
+
+function persistState() {
+  try {
+    mkdirSync(dirname(storeFilePath), { recursive: true })
+    writeFileSync(storeFilePath, JSON.stringify(state, null, 2))
+  } catch (error) {
+    logger.warn({ error }, "Failed to persist local store state")
+  }
+}
+
+const state: StoreState = loadState()
+
+if (!state.templates.some((template) => template.user_id === demoUserId)) {
+  state.templates.push(...sampleTemplates)
+  persistState()
+}
+
+/*
+ * Local dev persistence keeps import/review pages alive across browser refreshes
+ * and backend restarts. It is intentionally a simple JSON snapshot until a real
+ * database replaces the in-memory repository.
+ */
+logger.info({
+  imports: state.imports.length,
+  cleanedRows: state.cleanedRows.length,
+  savedRows: state.savedRows.length,
+}, "Local store state loaded")
+
+ensureSchema()
 
 export const store = {
   listTemplates(userId: string) {
@@ -66,6 +128,7 @@ export const store = {
       state.templates.unshift(template)
     }
 
+    persistState()
     return template
   },
 
@@ -74,6 +137,7 @@ export const store = {
     state.templates = state.templates.filter((template) => !(template.id === id && template.user_id === userId))
     const deleted = state.templates.length < before
     logger.info({ userId, templateId: id, deleted }, "Delete template")
+    if (deleted) persistState()
     return deleted
   },
 
@@ -139,6 +203,7 @@ export const store = {
       total_rows: input.rows.length,
     })
 
+    persistState()
     return job
   },
 
@@ -157,6 +222,7 @@ export const store = {
     state.imports = state.imports.map((job) => (job.id === id ? updated : job))
 
     logger.debug({ userId, importId: id, patchKeys: Object.keys(patch) }, "Import updated")
+    persistState()
     return updated
   },
 
@@ -171,9 +237,16 @@ export const store = {
     return sheets
   },
 
+  setSheets(importId: string, sheets: ImportSheet[]) {
+    logger.info({ importId, count: sheets.length }, "Setting sheets")
+    state.sheets = [...sheets, ...state.sheets.filter((sheet) => sheet.import_id !== importId)]
+    persistState()
+  },
+
   setCleanedRows(importId: string, rows: CleanedRow[]) {
     logger.info({ importId, count: rows.length }, "Setting cleaned rows")
     state.cleanedRows = [...rows, ...state.cleanedRows.filter((row) => row.import_id !== importId)]
+    persistState()
   },
 
   listCleanedRows(importId: string) {
@@ -209,6 +282,7 @@ export const store = {
     }
     logger.info({ userId, importId, rowId: row.id }, "Appended saved row")
     state.savedRows.push(row)
+    persistState()
     void invalidateAnalyticsCache(importId)
 
     return row
@@ -229,6 +303,7 @@ export const store = {
     }
     logger.info({ userId, rowId, importId: existing.import_id }, "Updated saved row")
     state.savedRows = state.savedRows.map((row) => (row.id === rowId ? updated : row))
+    persistState()
     void invalidateAnalyticsCache(existing.import_id)
 
     return updated
@@ -244,6 +319,7 @@ export const store = {
 
     logger.info({ userId, rowId, importId: existing.import_id }, "Deleted saved row")
     state.savedRows = state.savedRows.filter((row) => row.id !== rowId)
+    persistState()
     void invalidateAnalyticsCache(existing.import_id)
 
     return true
@@ -267,6 +343,7 @@ export const store = {
 
     logger.info({ userId, importId, savedCount: savedRows.length, totalInput: rows.length }, "Saving good rows")
     state.savedRows = [...state.savedRows.filter((row) => row.import_id !== importId), ...savedRows]
+    persistState()
     void invalidateImportCache(importId)
     void this.addHistory(userId, importId, "rows_saved", {
       saved_rows: savedRows.length,
@@ -277,9 +354,14 @@ export const store = {
     return savedRows
   },
 
-  listHistory(userId: string) {
+  async listHistory(userId: string) {
+    const dbEntries = await listHistoryEntries(userId)
+    if (dbEntries && dbEntries.length > 0) {
+      logger.debug({ userId, count: dbEntries.length }, "List history from DB")
+      return dbEntries
+    }
     const entries = state.history.filter((entry) => entry.user_id === userId || entry.user_id === demoUserId)
-    logger.debug({ userId, count: entries.length }, "List history")
+    logger.debug({ userId, count: entries.length }, "List history from local store")
     return entries
   },
 
@@ -294,7 +376,35 @@ export const store = {
     }
 
     state.history.unshift(entry)
+    void addHistoryEntry(userId, importId, action, meta)
     logger.info({ userId, importId, action }, "History entry added")
+    persistState()
     return entry
+  },
+
+  getApiKey(userId: string) {
+    return state.userApiKeys[userId] ?? null
+  },
+
+  setApiKey(userId: string, encryptedKey: string) {
+    state.userApiKeys[userId] = encryptedKey
+    persistState()
+    logger.info({ userId }, "API key saved")
+  },
+
+  deleteApiKey(userId: string) {
+    delete state.userApiKeys[userId]
+    persistState()
+    logger.info({ userId }, "API key removed")
+  },
+
+  getApiKeyInfo(userId: string): { provider: string; model: string } | null {
+    const raw = state.userApiKeys[userId]
+    if (!raw) return null
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
   },
 }

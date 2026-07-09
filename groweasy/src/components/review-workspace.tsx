@@ -1,12 +1,10 @@
 "use client"
 
-import { useState } from "react"
-import { toast } from "sonner"
-import { SaveIcon } from "lucide-react"
+import { useEffect, useState } from "react"
+import Link from "next/link"
+import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react"
 
 import { DataGrid } from "@/components/data-grid"
-import { api } from "@/lib/api-client"
-import { ExportMenu } from "@/components/export-menu"
 import { Button } from "@/components/ui/button"
 import type { CleanedRow, Template } from "@/lib/types"
 
@@ -19,42 +17,62 @@ export function ReviewWorkspace({
   rows: CleanedRow[]
   template: Template
 }) {
-  const [editableRows, setEditableRows] = useState(rows)
-  const [pending, setPending] = useState(false)
+  const [editableRows, setEditableRows] = useState(() => readReviewDraft(importId) ?? rows)
 
-  async function saveRows() {
-    setPending(true)
-
+  useEffect(() => {
     try {
-      const response = await api(`/imports/${importId}/save`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: editableRows }),
-      })
-      const data = (await response.json()) as { saved_rows?: number; error?: { message?: string } }
-
-      if (!response.ok) {
-        throw new Error(data.error?.message ?? "Unable to save rows.")
-      }
-
-      toast.success(`Saved ${data.saved_rows ?? 0} good or fixed rows.`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to save rows.")
-    } finally {
-      setPending(false)
+      window.sessionStorage.setItem(reviewDraftKey(importId), JSON.stringify(editableRows))
+    } catch {
+      // Best-effort draft only. The backend remains the source of truth.
     }
-  }
+  }, [editableRows, importId])
 
   return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button onClick={saveRows} disabled={pending}>
-          <SaveIcon />
-          {pending ? "Saving..." : "Save good rows"}
-        </Button>
-        <ExportMenu importId={importId} />
-      </div>
+    <div className="grid min-w-0 gap-4">
       <DataGrid rows={editableRows} template={template} onRowsChange={setEditableRows} />
     </div>
   )
+}
+
+export function ReviewNav({ importId }: { importId: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-muted-foreground hover:text-foreground"
+        render={<Link href={`/upload/${importId}/process`} />}
+      >
+        <ArrowLeftIcon className="size-4" />
+        Back
+      </Button>
+      <Button size="sm" render={<Link href={`/upload/${importId}/export`} />}>
+        Next
+        <ArrowRightIcon className="size-4" />
+      </Button>
+    </div>
+  )
+}
+
+function reviewDraftKey(importId: string) {
+  return `groweasy-review-draft:${importId}`
+}
+
+function readReviewDraft(importId: string) {
+  if (typeof window === "undefined") {
+    return null
+  }
+
+  const rawDraft = window.sessionStorage.getItem(reviewDraftKey(importId))
+
+  if (!rawDraft) {
+    return null
+  }
+
+  try {
+    return JSON.parse(rawDraft) as CleanedRow[]
+  } catch {
+    window.sessionStorage.removeItem(reviewDraftKey(importId))
+    return null
+  }
 }

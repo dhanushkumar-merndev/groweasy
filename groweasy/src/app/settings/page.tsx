@@ -2,6 +2,7 @@ import { AppShell } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { serverFetch } from "@/lib/server-api"
+import { ApiKeyManager } from "./api-key-manager"
 
 type ConfigStatus = {
   auth: boolean
@@ -37,6 +38,7 @@ export default async function SettingsPage() {
           ))}
         </CardContent>
       </Card>
+      <ApiKeyManager />
     </AppShell>
   )
 }

@@ -31,7 +31,7 @@ export async function AppShell({ title, description, actions, children }: AppShe
       <AppSidebar user={user} variant="inset" />
       <SidebarInset>
         <SiteHeader title={title} description={description} actions={actions} />
-        <main className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">{children}</main>
+        <main className="flex min-h-0 flex-1 flex-col gap-6 p-4 md:gap-6 md:p-6">{children}</main>
       </SidebarInset>
     </SidebarProvider>
   )

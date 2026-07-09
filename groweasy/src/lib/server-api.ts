@@ -1,15 +1,11 @@
+import "server-only"
+
 import { cookies } from "next/headers"
 import { notFound, redirect } from "next/navigation"
 
-const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"
+import type { CurrentUser } from "@/lib/auth-types"
 
-export type CurrentUser = {
-  id: string
-  name: string
-  email: string
-  image?: string | null
-  isDemo: boolean
-}
+const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"
 
 export async function serverFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const cookieStore = await cookies()

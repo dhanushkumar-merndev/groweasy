@@ -87,6 +87,11 @@ export async function invalidateImportCache(importId: string) {
   logger.debug({ importId }, "Invalidating import cache")
   await deleteCache(`import:${importId}:raw:v1`)
   await deleteCache(`import:${importId}:validation:v1`)
+  await invalidateProcessedImportCache(importId)
+}
+
+export async function invalidateProcessedImportCache(importId: string) {
+  logger.debug({ importId }, "Invalidating processed import cache")
   await deleteCache(`import:${importId}:formatted:v1`)
   await deleteCache(`import:${importId}:missing:v1`)
   await deleteCache(`import:${importId}:skipped:v1`)

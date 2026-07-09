@@ -1,146 +1,369 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { FileSpreadsheetIcon, Loader2Icon, UploadCloudIcon } from "lucide-react"
+import {
+  FileSpreadsheetIcon,
+  Loader2Icon,
+  RotateCcwIcon,
+  UploadCloudIcon,
+  XIcon,
+} from "lucide-react"
 
-import { CleanBatchResultView, type CleanBatchResponse } from "@/components/clean-batch-result"
 import { TemplateSelector } from "@/components/template-selector"
-import { api } from "@/lib/api-client"
-import { createRawBatchPayload, parseFileToRawRows, type ParsedRawUpload } from "@/lib/raw-batch-parser"
+import { parseFileToRawRows, type ParsedRawUpload, type RawBatchRow } from "@/lib/raw-batch-parser"
+import { saveLocalImport } from "@/lib/local-import-store"
+import {
+  clearUploadSession,
+  consumeHardReloadNavigationReset,
+  consumeUploadResetOnReload,
+  markUploadResetOnUnload,
+  readUploadDraft,
+  UPLOAD_DRAFT_KEY,
+  type UploadDraft,
+  type UploadDraftFile,
+} from "@/lib/upload-draft"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
 import type { Template } from "@/lib/types"
 
-export function UploadDropzone({ templates }: { templates: Template[] }) {
-  const [file, setFile] = useState<File | null>(null)
-  const [templateId, setTemplateId] = useState(templates[0]?.id ?? "")
-  const [parsedUpload, setParsedUpload] = useState<ParsedRawUpload | null>(null)
-  const [result, setResult] = useState<CleanBatchResponse | null>(null)
-  const [pending, setPending] = useState(false)
-  const selectedTemplate = useMemo(
-    () => templates.find((template) => template.id === templateId) ?? null,
-    [templateId, templates]
-  )
-  const sheets = useMemo(() => parsedUpload?.sheets ?? [], [parsedUpload])
-  const totalRows = useMemo(() => sheets.reduce((total, sheet) => total + sheet.rows, 0), [sheets])
+/* ─── Main component ───────────────────────────────────────────────── */
+export function UploadDropzone({
+  templates,
+  importId,
+  initialFiles = [],
+  initialTemplateId,
+}: {
+  templates: Template[]
+  importId?: string
+  initialFiles?: UploadDraftFile[]
+  initialTemplateId?: string
+}) {
+  const router = useRouter()
+  const defaultTemplateId = templates[0]?.id ?? ""
+  const [files, setFiles]           = useState<UploadDraftFile[]>(initialFiles)
+  const [templateId, setTemplateId] = useState(initialTemplateId || defaultTemplateId)
+  const [pending, setPending]       = useState(false)
 
-  async function inspectFile(nextFile: File) {
-    setFile(nextFile)
-    setParsedUpload(null)
-    setResult(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const didRestoreDraftRef = useRef(false)
+
+  const parsedUpload = useMemo<ParsedRawUpload | null>(() => {
+    if (files.length === 0) return null
+    const sheets: ParsedRawUpload["sheets"] = []
+    const rows: RawBatchRow[] = []
+
+    files.forEach((fileObj) => {
+      fileObj.parsed.sheets.forEach((sheet) => {
+        sheets.push({
+          name: `${fileObj.name} / ${sheet.name}`,
+          rows: sheet.rows,
+        })
+      })
+
+      fileObj.parsed.rows.forEach((row) => {
+        rows.push({
+          ...row,
+          source_sheet: `${fileObj.name} / ${row.source_sheet}`,
+        })
+      })
+    })
+
+    return { sheets, rows }
+  }, [files])
+
+  const selectedTemplate = useMemo(
+    () => templates.find((t) => t.id === templateId) ?? null,
+    [templateId, templates],
+  )
+  const sheets    = useMemo(() => parsedUpload?.sheets ?? [], [parsedUpload])
+  const totalRows = useMemo(() => sheets.reduce((s, sh) => s + sh.rows, 0), [sheets])
+
+  useEffect(() => {
+    if (importId) {
+      didRestoreDraftRef.current = true
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      if (consumeUploadResetOnReload() || consumeHardReloadNavigationReset()) {
+        clearUploadSession()
+        didRestoreDraftRef.current = true
+        return
+      }
+
+      const savedDraft = readUploadDraft()
+      didRestoreDraftRef.current = true
+
+      if (!savedDraft) {
+        return
+      }
+
+      setFiles(savedDraft.files)
+      setTemplateId(savedDraft.templateId || defaultTemplateId)
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [defaultTemplateId, importId])
+
+  useEffect(() => {
+    if (!didRestoreDraftRef.current) {
+      return
+    }
+
+    if (files.length === 0) {
+      window.sessionStorage.removeItem(UPLOAD_DRAFT_KEY)
+      return
+    }
+
+    const draft: UploadDraft = {
+      templateId,
+      files,
+    }
 
     try {
-      setParsedUpload(await parseFileToRawRows(nextFile))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to parse this file.")
+      window.sessionStorage.setItem(UPLOAD_DRAFT_KEY, JSON.stringify(draft))
+    } catch {
+      // sessionStorage quota exceeded (large file). Draft auto-save skipped — flow continues.
+    }
+  }, [files, templateId])
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (files.length === 0) return
+
+      event.preventDefault()
+      event.returnValue = ""
+    }
+
+    const handlePageHide = () => {
+      if (files.length === 0) return
+
+      markUploadResetOnUnload()
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    window.addEventListener("pagehide", handlePageHide)
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+      window.removeEventListener("pagehide", handlePageHide)
+    }
+  }, [files.length])
+
+  async function addFiles(newFiles: FileList | File[]) {
+    const list = Array.from(newFiles)
+
+    if (files.length + list.length > 5) {
+      toast.error("Maximum 5 files can be uploaded.")
+      return
+    }
+
+    for (const f of list) {
+      try {
+        const parsed = await parseFileToRawRows(f)
+        setFiles((prev) => [...prev, { name: f.name, size: f.size, parsed }])
+      } catch (error) {
+        toast.error(error instanceof Error ? `${f.name}: ${error.message}` : `Unable to parse ${f.name}`)
+      }
+    }
+  }
+
+  function removeFile(index: number) {
+    setFiles((prev) => prev.filter((_, i) => i !== index))
+    if (inputRef.current) inputRef.current.value = ""
+  }
+
+  function resetUpload() {
+    setFiles([])
+    setTemplateId(defaultTemplateId)
+    window.sessionStorage.removeItem(UPLOAD_DRAFT_KEY)
+
+    if (inputRef.current) {
+      inputRef.current.value = ""
+    }
+
+    if (importId) {
+      clearUploadSession(importId)
+      router.replace("/upload")
     }
   }
 
   async function submitUpload() {
-    if (!file || !selectedTemplate || !parsedUpload) {
+    if (files.length === 0 || !selectedTemplate || !parsedUpload) {
       toast.error("Choose a file and a template first.")
       return
     }
 
+    const total = parsedUpload.sheets.reduce((s, sh) => s + sh.rows, 0)
+    if (total > 10000) {
+      toast.error(`Too many rows (${total.toLocaleString()}). Maximum allowed is 10,000.`)
+      return
+    }
+
     setPending(true)
-    const payload = createRawBatchPayload(selectedTemplate, parsedUpload)
-
     try {
-      const response = await api("/clean-batch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      })
-      const data = (await response.json()) as CleanBatchResponse
+      const localId = crypto.randomUUID()
+      const nextImportId = importId ?? localId
+      const fileName = files.length === 1 ? files[0].name : `Grow Easy CRM (${files.length} files)`
 
-      if (!response.ok) {
-        throw new Error(data.error?.message ?? "Batch cleaning failed.")
+      if (importId) {
+        clearUploadSession(importId)
       }
 
-      setResult(data)
-      toast.success("Batch cleaned by Groq.")
+      saveLocalImport(nextImportId, {
+        templateId: selectedTemplate.id,
+        templateName: selectedTemplate.name,
+        fileName,
+        files,
+        rows: parsedUpload.rows,
+        sheets: parsedUpload.sheets,
+        totalRows: total,
+      })
+
+      window.sessionStorage.setItem(UPLOAD_DRAFT_KEY, JSON.stringify({ templateId, files }))
+      router.push(`/upload/${nextImportId}/validate`)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Batch cleaning failed.")
-    } finally {
+      toast.error(error instanceof Error ? error.message : "Upload failed.")
       setPending(false)
     }
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Upload workbook</CardTitle>
-        <CardDescription>Upload a CSV or Excel file and send the raw parsed rows to Groq.</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-5">
-        <label
-          className="flex min-h-48 cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed bg-muted/30 p-6 text-center transition hover:bg-muted/50"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => {
-            event.preventDefault()
-            const dropped = event.dataTransfer.files.item(0)
+    <>
+      <div className="grid gap-8 pb-10">
+        <div className="grid gap-6">
+        {/* Template selector and submit button */}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="grid gap-3 flex-1 max-w-md">
+            <Label className="text-base">Cleaning Template</Label>
+            <TemplateSelector templates={templates} value={templateId} onValueChange={setTemplateId} />
+          </div>
 
-            if (dropped) {
-              void inspectFile(dropped)
-            }
+          <div className="flex flex-shrink-0 gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={resetUpload}
+              disabled={pending || (files.length === 0 && templateId === defaultTemplateId)}
+              size="default"
+              className="px-4"
+            >
+              <RotateCcwIcon className="size-4" />
+              Reset
+            </Button>
+            <Button
+              onClick={submitUpload}
+              disabled={pending || files.length === 0 || !selectedTemplate || !parsedUpload}
+              size="default"
+              className={cn(
+                "relative overflow-hidden w-full sm:w-auto px-4",
+                "transition-all duration-200",
+                "active:scale-95",
+                "hover:shadow-lg hover:shadow-primary/20 hover:-translate-y-px",
+              )}
+            >
+              {pending ? <Loader2Icon className="size-4 animate-spin" /> : "Validate"}
+            </Button>
+          </div>
+        </div>
+
+        {/* Drop zone */}
+        <label
+          className={cn(
+            "group flex min-h-[44vh] cursor-pointer flex-col items-center justify-center gap-4 rounded-xl",
+            "border-2 border-dashed border-muted-foreground/20 bg-muted/5 p-6 text-center",
+            "transition-all duration-300 hover:bg-muted/15 hover:border-primary/40",
+            files.length > 0 && "min-h-[200px]",
+          )}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            const dropped = e.dataTransfer.files
+            if (dropped && dropped.length > 0) void addFiles(dropped)
           }}
         >
           <input
+            ref={inputRef}
             type="file"
+            multiple
             accept=".xlsx,.xls,.csv"
             className="sr-only"
-            onChange={(event) => {
-              const selected = event.target.files?.item(0)
-
-              if (selected) {
-                void inspectFile(selected)
-              }
+            onChange={(e) => {
+              const selected = e.target.files
+              if (selected) void addFiles(selected)
             }}
           />
-          <UploadCloudIcon className="size-8 text-primary" />
-          <div>
-            <p className="font-medium">Drop a spreadsheet or choose a file</p>
-            <p className="text-sm text-muted-foreground">Headers and raw cell values are preserved for backend cleaning.</p>
+          <div className="rounded-full bg-primary/10 p-4 transition-transform duration-300 group-hover:scale-105">
+            <UploadCloudIcon className="size-8 text-primary" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-lg font-medium">Drop spreadsheets or click to browse</p>
+            <p className="text-sm text-muted-foreground">
+              Supports .xlsx, .xls, and .csv — multiple files and sheets.
+            </p>
           </div>
         </label>
 
-        {file ? (
-          <div className="rounded-lg border p-3">
-            <div className="flex items-center gap-3">
-              <FileSpreadsheetIcon className="size-5 text-primary" />
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{file.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {(file.size / 1024).toFixed(1)} KB · {totalRows} raw rows detected
-                </p>
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {sheets.map((sheet) => (
-                <span key={sheet.name} className="rounded-md border px-2 py-1 text-xs">
-                  {sheet.name}: {sheet.rows}
-                </span>
-              ))}
-            </div>
+        {/* Files info list */}
+        {files.length > 0 && (
+          <div className="grid gap-3">
+            {files.map((fileObj, idx) => {
+              const fileRows = fileObj.parsed.sheets.reduce((sum, sh) => sum + sh.rows, 0)
+              return (
+                <div
+                  key={`${fileObj.name}-${idx}`}
+                  className="rounded-xl border bg-card p-4 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="rounded-full bg-primary/10 p-2 shrink-0">
+                      <FileSpreadsheetIcon className="size-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{fileObj.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {(fileObj.size / 1024).toFixed(1)} KB · {fileRows} raw rows detected
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(idx)}
+                      className={cn(
+                        "flex size-8 items-center justify-center rounded-lg shrink-0",
+                        "text-muted-foreground hover:text-destructive hover:bg-destructive/10",
+                        "transition-colors duration-150 cursor-pointer",
+                      )}
+                      title="Remove file"
+                    >
+                      <XIcon className="size-4" />
+                    </button>
+                  </div>
+                  {fileObj.parsed.sheets.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {fileObj.parsed.sheets.map((sheet) => (
+                        <span
+                          key={sheet.name}
+                          className="rounded-md bg-secondary/50 px-2.5 py-1 text-xs font-medium text-secondary-foreground"
+                        >
+                          {sheet.name}: {sheet.rows} rows
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+
+            {/* Summary row */}
+            <p className="text-xs text-muted-foreground text-right">
+              {files.length} {files.length === 1 ? "file" : "files"} · {totalRows} total rows · {sheets.length} {sheets.length === 1 ? "sheet" : "sheets"}
+            </p>
           </div>
-        ) : null}
-
-        <div className="grid gap-2">
-          <Label>Template</Label>
-          <TemplateSelector templates={templates} value={templateId} onValueChange={setTemplateId} />
-        </div>
-
-        <Button onClick={submitUpload} disabled={pending || !file || !selectedTemplate || !parsedUpload} className="w-full sm:w-fit">
-          {pending ? <Loader2Icon className="animate-spin" /> : null}
-          Clean batch
-        </Button>
-
-        {result ? <CleanBatchResultView result={result} /> : null}
-      </CardContent>
-    </Card>
+        )}
+      </div>
+      </div>
+    </>
   )
 }

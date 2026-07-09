@@ -12,15 +12,15 @@ const cards = [
 
 export function StatusCountCards({ summary }: { summary: Pick<ImportSummary, (typeof cards)[number]["key"]> }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))]">
       {cards.map((card) => {
         const Icon = card.icon
 
         return (
-          <Card key={card.key}>
+          <Card key={card.key} className="min-w-0">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{card.label}</CardTitle>
-              <Icon className="size-4 text-muted-foreground" />
+              <CardTitle className="min-w-0 truncate text-sm font-medium">{card.label}</CardTitle>
+              <Icon className="size-4 shrink-0 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-semibold">{summary[card.key]}</div>

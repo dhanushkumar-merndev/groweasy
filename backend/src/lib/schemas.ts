@@ -38,6 +38,35 @@ export const aiCellChangeSchema = z.object({
   reason: z.string(),
 })
 
+export const rawImportRowSchema = z.object({
+  id: z.string().optional(),
+  import_id: z.string().optional(),
+  sheet_id: z.string().optional(),
+  sheet_name: z.string().optional(),
+  sheet_index: z.number().int().min(0).optional(),
+  row_index: z.number().int().min(0).optional(),
+  source_sheet: z.string().optional(),
+  source_sheet_index: z.number().int().min(0).optional(),
+  source_row_index: z.number().int().min(0).optional(),
+  raw_data: rowDataSchema.optional(),
+  data: rowDataSchema.optional(),
+}).transform((row) => {
+  const importId = row.import_id ?? ""
+  const sheetIndex = row.sheet_index ?? row.source_sheet_index ?? 0
+  const rowIndex = row.row_index ?? row.source_row_index ?? 0
+  const sheetName = row.sheet_name ?? row.source_sheet ?? "Upload"
+
+  return {
+    id: row.id ?? `${importId}_${sheetIndex}_${rowIndex}`,
+    import_id: importId,
+    sheet_id: row.sheet_id ?? `${importId}_sheet_${sheetIndex + 1}`,
+    sheet_name: sheetName,
+    sheet_index: sheetIndex,
+    row_index: rowIndex,
+    raw_data: row.raw_data ?? row.data ?? {},
+  }
+})
+
 export const cleanedRowSchema = z.object({
   id: z.string(),
   import_id: z.string(),
@@ -76,6 +105,14 @@ export const uploadOptionsSchema = z.object({
 
 export const processImportSchema = z.object({
   force: z.boolean().default(false),
+})
+
+export const validateImportSchema = z.object({
+  rows: z.array(rawImportRowSchema).optional(),
+  blank_rows_removed: z.number().int().min(0).default(0),
+  remove_blank_rows: z.boolean().default(true),
+  dash_values_blank: z.boolean().default(true),
+  require_both_email_phone: z.boolean().default(false),
 })
 
 export const saveImportSchema = z.object({

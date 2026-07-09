@@ -9,7 +9,7 @@ export const sampleTemplates: Template[] = [
   {
     id: defaultTemplateId,
     user_id: demoUserId,
-    name: "Lead Cleaning Template",
+    name: "Grow Easy CRM",
     columns_config: [
       {
         key: "created_at",

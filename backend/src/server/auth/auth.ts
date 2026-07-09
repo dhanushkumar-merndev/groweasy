@@ -38,6 +38,7 @@ export const auth = betterAuth({
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID ?? "missing-google-client-id",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "missing-google-client-secret",
+      prompt: "select_account",
     },
   },
   plugins: [

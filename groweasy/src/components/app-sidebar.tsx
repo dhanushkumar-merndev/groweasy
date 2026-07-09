@@ -26,8 +26,10 @@ import {
   Table2Icon,
   UploadCloudIcon,
 } from "lucide-react"
-import type { CurrentUser } from "@/lib/server-api"
+import type { CurrentUser } from "@/lib/auth-types"
 import { AccountSwitcher } from "@/components/account-switcher"
+
+import { cn } from "@/lib/utils"
 
 const primaryNav = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboardIcon },
@@ -49,6 +51,10 @@ export function AppSidebar({
   user?: CurrentUser
 }) {
   const pathname = usePathname()
+  
+  const activeIndex = primaryNav.findIndex(
+    (item) => pathname === item.url || pathname.startsWith(`${item.url}/`)
+  )
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -79,6 +85,7 @@ export function AppSidebar({
                     <SidebarMenuButton
                       tooltip={item.title}
                       isActive={active}
+                      className={!active ? "hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground" : undefined}
                       render={<Link href={item.url} />}
                     >
                       <Icon />
@@ -111,21 +118,17 @@ export function AppSidebar({
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <AccountSwitcher
-              user={
-                user ?? {
-                  id: "demo",
-                  name: "Excel Cleaner",
-                  email: "Google login ready",
-                  image: null,
-                  isDemo: true,
-                }
-              }
-            />
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <AccountSwitcher
+          user={
+            user ?? {
+              id: "demo",
+              name: "Excel Cleaner",
+              email: "Google login ready",
+              image: null,
+              isDemo: true,
+            }
+          }
+        />
       </SidebarFooter>
     </Sidebar>
   )

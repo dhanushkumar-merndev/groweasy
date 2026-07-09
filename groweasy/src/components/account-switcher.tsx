@@ -4,9 +4,11 @@ import * as React from "react"
 import { toast } from "sonner"
 import {
   CheckCircle2Icon,
-  ChevronUpIcon,
+  ChevronRightIcon,
   Loader2Icon,
+  LogOutIcon,
   PlusIcon,
+  SwitchCameraIcon,
 } from "lucide-react"
 
 import {
@@ -23,10 +25,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
   SidebarMenuButton,
+  SidebarMenu,
+  SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { API_BASE } from "@/lib/api-client"
-import type { CurrentUser } from "@/lib/server-api"
+import type { CurrentUser } from "@/lib/auth-types"
 import { cn } from "@/lib/utils"
 
 const MAX_DEVICE_SESSIONS = 5
@@ -104,15 +118,36 @@ function buildRows(user: CurrentUser, sessions: DeviceSession[]): SessionRow[] {
   return [current, ...otherRows].slice(0, MAX_DEVICE_SESSIONS)
 }
 
+async function fetchDeviceSessions() {
+  const response = await fetch(`${API_BASE}/api/auth/multi-session/list-device-sessions`, {
+    credentials: "include",
+  })
+
+  if (!response.ok) {
+    throw new Error("Unable to load signed-in accounts.")
+  }
+
+  return (await response.json()) as DeviceSession[]
+}
+
 export function AccountSwitcher({ user }: { user: CurrentUser }) {
   const [open, setOpen] = React.useState(false)
   const [sessions, setSessions] = React.useState<DeviceSession[]>([])
-  const [loading, setLoading] = React.useState(false)
+  const [loading, setLoading] = React.useState(true)
   const [pendingToken, setPendingToken] = React.useState<string | null>(null)
   const [adding, setAdding] = React.useState(false)
 
   const rows = React.useMemo(() => buildRows(user, sessions), [sessions, user])
   const sessionLimitReached = rows.length >= MAX_DEVICE_SESSIONS
+  const showSkeleton = loading && sessions.length === 0
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen && !user.isDemo) {
+      setLoading(true)
+    }
+
+    setOpen(nextOpen)
+  }
 
   React.useEffect(() => {
     if (!open || user.isDemo) return
@@ -120,18 +155,8 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
     let cancelled = false
 
     async function loadSessions() {
-      setLoading(true)
-
       try {
-        const response = await fetch(`${API_BASE}/api/auth/multi-session/list-device-sessions`, {
-          credentials: "include",
-        })
-
-        if (!response.ok) {
-          throw new Error("Unable to load signed-in accounts.")
-        }
-
-        const data = (await response.json()) as DeviceSession[]
+        const data = await fetchDeviceSessions()
 
         if (!cancelled) {
           setSessions(data)
@@ -211,29 +236,94 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
     }
   }
 
+  async function logout() {
+    try {
+      const deviceSessions = user.isDemo ? [] : await fetchDeviceSessions().catch(() => [])
+      const currentSession = deviceSessions.find((item) => item.user.id === user.id)
+      const hasNextSession = deviceSessions.some((item) => item.user.id !== user.id)
+
+      if (currentSession?.session.token && hasNextSession) {
+        const revokeResponse = await fetch(`${API_BASE}/api/auth/multi-session/revoke`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionToken: currentSession.session.token }),
+          credentials: "include",
+        })
+
+        if (revokeResponse.ok) {
+          window.location.assign("/dashboard")
+          return
+        }
+      }
+
+      const res = await fetch(`${API_BASE}/api/auth/sign-out`, {
+        method: "POST",
+        credentials: "include",
+      })
+
+      if (res.ok || res.status === 401) window.location.assign("/login")
+    } catch {
+      window.location.assign("/login")
+    }
+  }
+
   return (
     <>
-      <SidebarMenuButton
-        size="lg"
-        className="h-12 rounded-lg border border-sidebar-border/70 bg-sidebar/40 hover:bg-sidebar-border/40 hover:text-sidebar-foreground active:bg-sidebar-border/40 data-open:hover:bg-sidebar-border/40 data-open:hover:text-sidebar-foreground"
-        onClick={() => setOpen(true)}
-      >
-        <Avatar className="size-8 rounded-lg">
-          <AvatarImage src={user.image ?? undefined} alt={user.name} />
-          <AvatarFallback className="rounded-lg bg-muted text-xs font-semibold text-foreground">
-            {getInitials(user.name, user.email)}
-          </AvatarFallback>
-        </Avatar>
-        <span className="grid min-w-0 flex-1 text-left text-sm leading-tight">
-          <span className="truncate font-medium">{user.name}</span>
-          <span className="truncate text-xs text-muted-foreground">
-            {user.isDemo ? "Demo workspace" : user.email}
-          </span>
-        </span>
-        <ChevronUpIcon className="ml-auto size-4 text-muted-foreground" />
-      </SidebarMenuButton>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <SidebarMenuButton
+                  size="lg"
+                  className="h-12 rounded-lg border border-sidebar-border/70 bg-sidebar/40 hover:bg-sidebar-border/40 hover:text-sidebar-foreground active:bg-sidebar-border/40 data-open:hover:bg-sidebar-border/40 data-open:hover:text-sidebar-foreground"
+                />
+              }
+            >
+              <Avatar className="size-8 rounded-lg">
+                <AvatarImage src={user.image ?? undefined} alt={user.name} />
+                <AvatarFallback className="rounded-lg bg-muted text-xs font-semibold text-foreground">
+                  {getInitials(user.name, user.email)}
+                </AvatarFallback>
+              </Avatar>
+              <span className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-tight">
+                {user.name}
+              </span>
+              <ChevronRightIcon className="ml-auto size-4 text-muted-foreground" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="right" align="end" sideOffset={4} className="min-w-56">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="p-0 font-normal">
+                  <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                    <Avatar className="size-8 rounded-lg">
+                      <AvatarImage src={user.image ?? undefined} alt={user.name} />
+                      <AvatarFallback className="rounded-lg bg-muted text-xs font-semibold">
+                        {getInitials(user.name, user.email)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="grid flex-1 text-left text-sm leading-tight">
+                      <span className="truncate font-medium">{user.name}</span>
+                      <span className="truncate text-xs text-muted-foreground">{user.email}</span>
+                    </div>
+                  </div>
+                </DropdownMenuLabel>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handleOpenChange(true)}>
+                <SwitchCameraIcon className="size-4" />
+                Switch account
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={() => void logout()}>
+                <LogOutIcon className="size-4" />
+                Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </SidebarMenuItem>
+      </SidebarMenu>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Switch Account</DialogTitle>
@@ -242,57 +332,73 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-2">
-            {rows.map((row) => (
-              <div
-                key={row.id}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg border border-border bg-background p-2.5",
-                  row.active && "border-primary/30 bg-primary/5"
-                )}
-              >
-                <Avatar className="size-9 rounded-lg">
-                  <AvatarImage src={row.image ?? undefined} alt={row.name} />
-                  <AvatarFallback className="rounded-lg bg-muted text-xs font-semibold">
-                    {getInitials(row.name, row.email)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{row.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{row.email}</div>
-                  <div className="mt-0.5 text-[11px] text-muted-foreground">
-                    {formatExpiry(row.expiresAt)}
+          <div className="space-y-2" style={{ minHeight: "188px" }}>
+            {showSkeleton
+              ? Array.from({ length: 2 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-3 rounded-lg border border-border bg-background p-2.5">
+                    <Skeleton className="size-9 rounded-lg" />
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-3 w-48" />
+                      <Skeleton className="h-3 w-20" />
+                    </div>
+                    <Skeleton className="h-7 w-16 rounded-md" />
                   </div>
-                </div>
-
-                {row.active ? (
-                  <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-                    <CheckCircle2Icon className="size-3" />
-                    Active
-                  </span>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!row.token || pendingToken === row.token}
-                    onClick={() => void switchSession(row)}
+                ))
+              : rows.map((row) => (
+                  <div
+                    key={row.id}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg border border-border bg-background p-2.5",
+                      row.active
+                        ? "border-primary/30 bg-primary/5"
+                        : "cursor-pointer transition-colors hover:bg-muted/50"
+                    )}
+                    onClick={() => row.active ? null : void switchSession(row)}
+                    role={row.active ? undefined : "button"}
+                    tabIndex={row.active ? undefined : 0}
+                    onKeyDown={(e) => {
+                      if (!row.active && (e.key === "Enter" || e.key === " ")) {
+                        e.preventDefault()
+                        void switchSession(row)
+                      }
+                    }}
                   >
-                    {pendingToken === row.token ? (
-                      <Loader2Icon className="size-3.5 animate-spin" />
-                    ) : null}
-                    Switch
-                  </Button>
-                )}
-              </div>
-            ))}
+                    <Avatar className="size-9 rounded-lg">
+                      <AvatarImage src={row.image ?? undefined} alt={row.name} />
+                      <AvatarFallback className="rounded-lg bg-muted text-xs font-semibold">
+                        {getInitials(row.name, row.email)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{row.name}</div>
+                      <div className="truncate text-xs text-muted-foreground">{row.email}</div>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground">
+                        {formatExpiry(row.expiresAt)}
+                      </div>
+                    </div>
 
-            {loading ? (
-              <div className="flex items-center gap-2 rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
-                <Loader2Icon className="size-4 animate-spin" />
-                Loading accounts
-              </div>
-            ) : null}
+                    {row.active ? (
+                      <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                        <CheckCircle2Icon className="size-3" />
+                        Active
+                      </span>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!row.token || pendingToken === row.token}
+                        onClick={(e) => { e.stopPropagation(); void switchSession(row) }}
+                      >
+                        {pendingToken === row.token ? (
+                          <Loader2Icon className="size-3.5 animate-spin" />
+                        ) : null}
+                        Switch
+                      </Button>
+                    )}
+                  </div>
+                ))}
           </div>
 
           <Button

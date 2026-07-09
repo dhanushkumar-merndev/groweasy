@@ -24,7 +24,7 @@ const defaultColumn: TemplateColumn = {
 export function TemplateForm({ template }: { template?: Template }) {
   const router = useRouter()
   const editing = Boolean(template?.id)
-  const [name, setName] = useState(template?.name ?? "Lead Cleaning Template")
+  const [name, setName] = useState(template?.name ?? "Grow Easy CRM")
   const [columns, setColumns] = useState<TemplateColumn[]>(template?.columns_config ?? [defaultColumn])
   const [pending, setPending] = useState(false)
 

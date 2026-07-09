@@ -1,6 +1,6 @@
 import cors from "cors"
 import express from "express"
-import multer from "multer"
+import rateLimit from "express-rate-limit"
 
 import { globalErrorHandler } from "./middleware/error-handler.js"
 import authRoutes from "./routes/auth.js"
@@ -11,6 +11,7 @@ import tablesRoutes from "./routes/tables.js"
 import analyticsRoutes from "./routes/analytics.js"
 import googleSheetsRoutes from "./routes/google-sheets.js"
 import historyRoutes from "./routes/history.js"
+import settingsRoutes from "./routes/settings.js"
 import { logger } from "./lib/logger.js"
 
 const app = express()
@@ -31,25 +32,40 @@ app.use(
   })
 )
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
-
 app.use((req, _res, next) => {
   logger.info({ method: req.method, url: req.url, origin: req.headers.origin }, "Incoming request")
   next()
 })
 
-app.use("/api/auth", authRoutes)
-app.use("/api/clean-batch", express.json({ limit: "25mb" }), cleanBatchRoutes)
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: "RATE_LIMITED", message: "Too many requests. Try again shortly." } },
+})
 
-app.use("/api/imports", upload.single("file"), importsRoutes)
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: "RATE_LIMITED", message: "Too many auth requests. Try again shortly." } },
+})
 
+app.use("/api/auth", authLimiter, authRoutes)
 app.use(express.json({ limit: "25mb" }))
 
-app.use("/api/templates", templatesRoutes)
-app.use("/api/tables", tablesRoutes)
-app.use("/api/analytics", analyticsRoutes)
-app.use("/api/google-sheets", googleSheetsRoutes)
-app.use("/api/history", historyRoutes)
+app.use("/api/clean-batch", limiter, cleanBatchRoutes)
+
+app.use("/api/imports", limiter, importsRoutes)
+
+app.use("/api/templates", limiter, templatesRoutes)
+app.use("/api/tables", limiter, tablesRoutes)
+app.use("/api/analytics", limiter, analyticsRoutes)
+app.use("/api/google-sheets", limiter, googleSheetsRoutes)
+app.use("/api/history", limiter, historyRoutes)
+app.use("/api/settings", limiter, settingsRoutes)
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() })

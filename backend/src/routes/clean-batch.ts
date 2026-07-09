@@ -134,16 +134,21 @@ async function retryUnclearRowsWithGroq(
   logger.info({ retryCount: retryCandidates.length }, "Retrying unclear rows with Groq")
   const replacements: CleanBatchRow[] = []
 
-  for (const [chunkIndex, chunk] of chunkArray(retryCandidates, AI_RETRY_CHUNK_SIZE).entries()) {
-    const chunkBatch = { ...batch, rows: chunk }
+  const chunks = chunkArray(retryCandidates, AI_RETRY_CHUNK_SIZE)
+  const queue = [...chunks.map((chunk, index) => ({ chunk, chunkIndex: index }))]
 
-    for (let offset = 0; offset < apiKeys.length; offset += 1) {
-      const keyIndex = (chunkIndex + offset) % apiKeys.length
+  async function worker(apiKey: string, keyIndex: number) {
+    while (queue.length > 0) {
+      const item = queue.shift()
+      if (!item) break
+      
+      const { chunk, chunkIndex } = item
+      const chunkBatch = { ...batch, rows: chunk }
 
       try {
         logger.debug({ chunkIndex, keyIndex, chunkSize: chunk.length }, "Retry chunk with Groq")
         const response = await requestGroqJson({
-          apiKey: apiKeys[keyIndex],
+          apiKey,
           keyIndex,
           systemPrompt: retrySystemPrompt,
           payload: {
@@ -158,12 +163,20 @@ async function retryUnclearRowsWithGroq(
         const validRows = collectValidRetryRows(rebuildSummary(parsed, chunkBatch), chunkBatch)
 
         replacements.push(...validRows)
-        break
-      } catch {
-        continue
+      } catch (error: any) {
+        queue.unshift(item)
+        if (error instanceof CleanBatchError && (error.status === 429 || error.groqStatus === 429)) {
+          logger.warn({ keyIndex }, "Rate limit hit, waiting 60s for this worker")
+          await new Promise(resolve => setTimeout(resolve, 60000))
+        } else {
+          logger.warn({ keyIndex, error: error.message }, "API error, waiting 5s before retrying chunk")
+          await new Promise(resolve => setTimeout(resolve, 5000))
+        }
       }
     }
   }
+
+  await Promise.all(apiKeys.map((key, index) => worker(key, index)))
 
   if (replacements.length === 0) {
     logger.warn("No rows were replaced by Groq retry")
@@ -203,9 +216,26 @@ function collectValidRetryRows(result: CleanBatchResult, batch: CleanBatchReques
     return (
       expectedRows.has(identity) &&
       hasExactCleanedDataKeys(row, columns) &&
-      hasValidMissingFields(row, columns)
+      hasValidMissingFields(row, columns) &&
+      hasValidSkippedRow(row, columns) &&
+      hasValidAiChanges(row)
     )
   })
+}
+
+function hasValidAiChanges(row: CleanBatchRow) {
+  return row.ai_changes.every(
+    (change) => change.before !== change.after && change.reason.trim().length > 0
+  )
+}
+
+function hasValidSkippedRow(row: CleanBatchRow, columns: CleanBatchTemplateColumn[]) {
+  if (row.status !== "skipped") {
+    return true
+  }
+
+  const identityKeys = columns.filter(isIdentityOrContactColumn).map((c) => c.key)
+  return identityKeys.every((key) => !String(row.cleaned_data[key] || "").trim())
 }
 
 function mergeRetryRows(batch: CleanBatchRequest, result: CleanBatchResult, replacements: CleanBatchRow[]) {
@@ -286,6 +316,8 @@ function cleanSingleRow(
     }
   }
 
+  let extraNotes: string[] = []
+
   for (const column of columns) {
     const before = mappedBefore.get(column.key) ?? ""
     const after = cleanedData[column.key] ?? ""
@@ -297,6 +329,27 @@ function cleanSingleRow(
         after,
         reason: buildChangeReason(column.key),
       })
+    }
+    
+    // Check if original value was a valid email/phone that didn't get mapped because another was chosen
+    if (before && before !== after && after !== "") {
+       if (isEmailColumn(column.key, column)) {
+         const extra = extractEmail(before)
+         if (extra && extra !== after) extraNotes.push(`Secondary Email: ${extra}`)
+       }
+       if (isMobileColumn(column.key, column)) {
+         const extra = extractIndianMobile(before)
+         if (extra && extra !== after) extraNotes.push(`Secondary Mobile: ${extra}`)
+       }
+    }
+  }
+  
+  if (extraNotes.length > 0) {
+    const notesColumn = columns.find(c => isNotesColumn(c.key, c))
+    if (notesColumn) {
+      cleanedData[notesColumn.key] = cleanedData[notesColumn.key]
+        ? `${cleanedData[notesColumn.key]} | ${extraNotes.join(", ")}`
+        : extraNotes.join(", ")
     }
   }
 
@@ -559,9 +612,9 @@ async function requestGroqJson(input: {
 
   if (!response.ok) {
     throw new CleanBatchError(
-      "GROQ_REQUEST_FAILED",
+      response.status === 429 ? "GROQ_RATE_LIMIT" : "GROQ_REQUEST_FAILED",
       `Groq request failed on key ${input.keyIndex + 1} with HTTP ${response.status}.`,
-      502,
+      response.status === 429 ? 429 : 502,
       response.status,
       responseText.slice(0, 500)
     )
@@ -607,12 +660,11 @@ function extractIndianMobile(value: string) {
   for (const candidate of candidates) {
     const digits = candidate.replace(/\D/g, "")
 
-    if (digits.length === 10 && /^[6-9]/.test(digits)) {
-      return digits
-    }
-
-    if (digits.length === 12 && digits.startsWith("91") && /^[6-9]/.test(digits.slice(2))) {
-      return digits.slice(2)
+    if (digits.length >= 10 && digits.length <= 14) {
+      const mobile = digits.slice(-10)
+      if (/^[6-9]/.test(mobile)) {
+        return mobile
+      }
     }
   }
 

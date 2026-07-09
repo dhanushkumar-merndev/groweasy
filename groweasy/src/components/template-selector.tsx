@@ -19,10 +19,14 @@ export function TemplateSelector({
   value?: string
   onValueChange: (value: string) => void
 }) {
+  const selected = templates.find((t) => t.id === value)
+
   return (
     <Select value={value} onValueChange={(nextValue) => nextValue && onValueChange(nextValue)}>
       <SelectTrigger className="w-full">
-        <SelectValue placeholder="Select a cleaning template" />
+        <SelectValue placeholder="Select a cleaning template">
+          {selected?.name}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         <SelectGroup>

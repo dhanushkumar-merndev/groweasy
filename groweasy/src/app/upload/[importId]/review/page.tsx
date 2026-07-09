@@ -1,6 +1,6 @@
 import { AppShell } from "@/components/app-shell"
 import { ImportStepLayout } from "@/components/import-step-layout"
-import { ReviewWorkspace } from "@/components/review-workspace"
+import { ReviewNav, ReviewWorkspace } from "@/components/review-workspace"
 import { StatusCountCards } from "@/components/status-count-cards"
 import { requireCurrentUser, serverFetch } from "@/lib/server-api"
 import type { CleanedRow, ImportJob, Template } from "@/lib/types"
@@ -21,8 +21,9 @@ export default async function ReviewPage({ params }: { params: Promise<{ importI
 
   return (
     <AppShell title="Review" description="Edit good and missing rows, then permanently save only valid rows.">
-      <ImportStepLayout importId={importId} currentStep={4}>
-        <div className="grid gap-4">
+      <ImportStepLayout importId={importId} currentStep={4} importStatus={job.status}>
+        <div className="grid min-w-0 gap-4">
+          <ReviewNav importId={importId} />
           <StatusCountCards summary={job} />
           <ReviewWorkspace importId={importId} rows={rows} template={template} />
         </div>

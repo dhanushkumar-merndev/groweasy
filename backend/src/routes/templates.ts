@@ -20,7 +20,7 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     await requireCurrentUser(req)
-    return jsonError(res, "TEMPLATE_LOCKED", "Use the default Lead Cleaning Template.", 403)
+    return jsonError(res, "TEMPLATE_LOCKED", "Use the default Grow Easy CRM template.", 403)
   } catch (error) {
     return handleRouteError(res, error)
   }

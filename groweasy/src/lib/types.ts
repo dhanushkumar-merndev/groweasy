@@ -174,6 +174,9 @@ export type ValidationResult = {
   warnings: ValidationWarning[]
   blank_rows_removed: number
   total_rows: number
+  remove_blank_rows?: boolean
+  dash_values_blank?: boolean
+  require_both_email_phone?: boolean
 }
 
 export type HistoryAction =

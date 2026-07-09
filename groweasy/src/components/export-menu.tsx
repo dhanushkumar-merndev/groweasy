@@ -32,17 +32,7 @@ export function ExportMenu({ importId }: { importId: string }) {
     anchor.download = "cleaned-data.xlsx"
     anchor.click()
     URL.revokeObjectURL(url)
-  }
-
-  async function exportGoogleSheet() {
-    const response = await api(`/imports/${importId}/export/google-sheet`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ import_id: importId, sheet_name: "Cleaned Data" }),
-    })
-    const data = (await response.json()) as { message?: string }
-
-    toast.message(data.message ?? (response.ok ? "Google Sheet export requested." : "Google Sheet export failed."))
+    window.sessionStorage.setItem(exportedSessionKey(importId), "1")
   }
 
   return (
@@ -60,11 +50,11 @@ export function ExportMenu({ importId }: { importId: string }) {
           <TableIcon />
           Same tabs as source
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => void exportGoogleSheet()}>
-          <FileSpreadsheetIcon />
-          Google Sheet
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
+}
+
+function exportedSessionKey(importId: string) {
+  return `groweasy-exported:${importId}`
 }
