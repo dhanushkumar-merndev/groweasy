@@ -9,6 +9,7 @@ export type LocalValidationPreview = {
   dashValuesBlank: boolean
   requireBothEmailPhone: boolean
   generateDescription: boolean
+  correctSpelling: boolean
 }
 
 type LegacyRawImportRow = RawImportRow & {

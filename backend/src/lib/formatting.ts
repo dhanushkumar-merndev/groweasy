@@ -10,7 +10,8 @@ import type {
 } from "../lib/types.js"
 
 export const DASH_ONLY_RE = /^[-_\s]+$/
-export const NULLISH_RE = /^(na|n\/a|null|undefined|none|not\s*useful|###|test|sample|abc123|garbage)$/i
+export const GARBAGE_ONLY_RE = /^[#*]+$/
+export const NULLISH_RE = /^(na|n\/a|null|undefined|none|not\s*useful|test|sample|abc123|garbage)$/i
 
 const FORMULA_LIKE_RE = /^([=+@]|-[A-Za-z(])/
 const SAFE_PLUS_NUMBER_RE = /^\+\d[\d\s().-]*$/
@@ -47,7 +48,7 @@ export function sanitizeCellValue(value: unknown, dashValuesBlank = true): CellV
     return ""
   }
 
-  if (dashValuesBlank && (DASH_ONLY_RE.test(compact) || NULLISH_RE.test(compact))) {
+  if (dashValuesBlank && (DASH_ONLY_RE.test(compact) || GARBAGE_ONLY_RE.test(compact) || NULLISH_RE.test(compact))) {
     return ""
   }
 
@@ -148,6 +149,7 @@ export function applyFormattingRules(value: CellValue, rules: FormattingRule[]) 
 
 export type ContactRequirementOptions = {
   requireBothEmailPhone?: boolean
+  correctSpelling?: boolean
 }
 
 export function cleanRowsWithTemplate(
@@ -182,7 +184,7 @@ export function cleanRowWithTemplate(
     const extractedValue = extractTargetValue(rawValue, column)
     const sanitized = sanitizeCellValue(extractedValue)
     const formatted = applyFormattingRules(sanitized, column.format_rules)
-    const normalized = normalizeTextSpelling(formatted, column)
+    const normalized = options.correctSpelling ? normalizeTextSpelling(formatted, column) : formatted
 
     cleaned_data[column.key] = normalized
   }
@@ -219,13 +221,17 @@ export function getMissingFieldsForTemplate(
   const missing = new Set<string>()
   const emailColumns = template.columns_config.filter(isEmailContactField)
   const phoneColumns = template.columns_config.filter(isPhoneContactField)
-  const hasEmail = emailColumns.some((column) => hasValue(cleanedData[column.key]))
-  const hasPhone = phoneColumns.some((column) => hasValue(cleanedData[column.key]))
+  const hasEmail = emailColumns.some((column) => hasValidEmailValue(cleanedData[column.key]))
+  const hasPhone = phoneColumns.some((column) => hasValidPhoneValue(cleanedData[column.key]))
 
   for (const column of template.columns_config) {
     const isContactRuleColumn = isEmailContactField(column) || isPhoneContactField(column)
 
     if (isContactRuleColumn) {
+      continue
+    }
+
+    if (isNameField(column) && (hasEmail || hasPhone)) {
       continue
     }
 
@@ -268,8 +274,24 @@ function isPhoneContactField(column: TemplateColumn) {
   return target.includes("mobile") || target.includes("phone") || target.includes("whatsapp")
 }
 
+function isNameField(column: TemplateColumn) {
+  const target = normalizeKey(`${column.key} ${column.label}`)
+  return target === "name" || target.includes("customer_name") || target.includes("client_name") || target.includes("lead_name")
+}
+
 function hasValue(value: unknown) {
   return String(value ?? "").trim().length > 0
+}
+
+function hasValidEmailValue(value: unknown) {
+  const text = String(value ?? "").trim()
+  return EMAIL_RE.test(text)
+}
+
+function hasValidPhoneValue(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "")
+  const last10 = digits.slice(-10)
+  return last10.length === 10 && /^[6-9]/.test(last10)
 }
 
 function findSourceValue(row: RowData, column: TemplateColumn) {
@@ -513,6 +535,7 @@ const HEADER_SYNONYMS: Record<string, string> = {
   campain: "campaign",
   contri: "country",
   craeted: "created",
+  cty: "city",
   custmer: "customer",
   deta: "date",
   detials: "details",
@@ -527,6 +550,7 @@ const HEADER_SYNONYMS: Record<string, string> = {
   projct: "project",
   reamrks: "remarks",
   sourse: "source",
+  stat: "state",
   staus: "status",
   tiem: "time",
   txt: "text",
@@ -600,14 +624,37 @@ const INDIAN_STATE_NAMES = [
 ]
 
 function formatDateLikeValue(value: string) {
-  if (!value) {
+  const text = value.trim()
+
+  if (!text) {
     return ""
   }
 
-  const parsed = new Date(value)
+  const dateOnly = text.split(/[T\s]+/)[0]
+  const slashOrDash = dateOnly.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/)
+
+  if (slashOrDash) {
+    const [, first, second, yearPart] = slashOrDash
+    const year = yearPart.length === 2 ? `20${yearPart}` : yearPart
+    const firstNumber = Number(first)
+    const secondNumber = Number(second)
+    const day = firstNumber > 12 ? firstNumber : secondNumber > 12 ? secondNumber : firstNumber
+    const month = firstNumber > 12 ? secondNumber : secondNumber > 12 ? firstNumber : secondNumber
+
+    return `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`
+  }
+
+  const iso = dateOnly.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+
+  if (iso) {
+    const [, year, month, day] = iso
+    return `${String(Number(day)).padStart(2, "0")}/${String(Number(month)).padStart(2, "0")}/${year}`
+  }
+
+  const parsed = new Date(text)
 
   if (Number.isNaN(parsed.getTime())) {
-    return value
+    return text
   }
 
   return new Intl.DateTimeFormat("en-GB").format(parsed)

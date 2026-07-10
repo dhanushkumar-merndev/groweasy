@@ -1,15 +1,14 @@
 import { AppShell } from "@/components/app-shell"
 import { ImportStepLayout } from "@/components/import-step-layout"
 import { ReviewNav, ReviewWorkspace } from "@/components/review-workspace"
-import { StatusCountCards } from "@/components/status-count-cards"
 import { requireCurrentUser, serverFetch } from "@/lib/server-api"
-import type { CleanedRow, ImportJob, Template } from "@/lib/types"
+import type { CleanedRow, ImportJob, Template, ValidationResult } from "@/lib/types"
 
 export default async function ReviewPage({ params }: { params: Promise<{ importId: string }> }) {
   const { importId } = await params
   await requireCurrentUser()
 
-  const importData = await serverFetch<{ import: ImportJob; template: Template | null; cleaned_rows: CleanedRow[] }>(
+  const importData = await serverFetch<{ import: ImportJob; template: Template | null; validation?: ValidationResult; cleaned_rows: CleanedRow[] }>(
     `/imports/${importId}`
   )
   const { import: job, template } = importData
@@ -24,8 +23,12 @@ export default async function ReviewPage({ params }: { params: Promise<{ importI
       <ImportStepLayout importId={importId} currentStep={4} importStatus={job.status}>
         <div className="grid min-w-0 gap-4">
           <ReviewNav importId={importId} />
-          <StatusCountCards summary={job} />
-          <ReviewWorkspace importId={importId} rows={rows} template={template} />
+          <ReviewWorkspace
+            importId={importId}
+            rows={rows}
+            template={template}
+            requireBothEmailPhone={importData.validation?.require_both_email_phone === true}
+          />
         </div>
       </ImportStepLayout>
     </AppShell>

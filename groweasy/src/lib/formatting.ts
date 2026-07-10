@@ -10,12 +10,17 @@ import type {
 } from "@/lib/types"
 
 export const DASH_ONLY_RE = /^[-_\s]+$/
-export const NULLISH_RE = /^(na|n\/a|null|undefined|none)$/i
+export const GARBAGE_ONLY_RE = /^[#*]+$/
+export const NULLISH_RE = /^(na|n\/a|null|undefined|none|not\s*useful|test|sample|abc123|garbage)$/i
 
 const FORMULA_LIKE_RE = /^([=+@]|-[A-Za-z(])/
 const SAFE_PLUS_NUMBER_RE = /^\+\d[\d\s().-]*$/
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
 const INTERNATIONAL_PHONE_RE = /(?:\+|00)\s*(\d{1,3})[\s().-]*\d/
+
+export type ContactRequirementOptions = {
+  requireBothEmailPhone?: boolean
+}
 
 export function normalizeKey(value: string) {
   return value
@@ -40,7 +45,7 @@ export function sanitizeCellValue(value: unknown, dashValuesBlank = true): CellV
     return ""
   }
 
-  if (dashValuesBlank && (DASH_ONLY_RE.test(compact) || NULLISH_RE.test(compact))) {
+  if (dashValuesBlank && (DASH_ONLY_RE.test(compact) || GARBAGE_ONLY_RE.test(compact) || NULLISH_RE.test(compact))) {
     return ""
   }
 
@@ -139,21 +144,28 @@ export function applyFormattingRules(value: CellValue, rules: FormattingRule[]) 
   return formatted.trim()
 }
 
-export function cleanRowsWithTemplate(rows: RawImportRow[], template: Template): CleanedRow[] {
-  return rows.map((row) => cleanRowWithTemplate(row, template))
+export function cleanRowsWithTemplate(
+  rows: RawImportRow[],
+  template: Template,
+  options: ContactRequirementOptions = {},
+): CleanedRow[] {
+  return rows.map((row) => cleanRowWithTemplate(row, template, options))
 }
 
-export function cleanRowWithTemplate(row: RawImportRow, template: Template): CleanedRow {
+export function cleanRowWithTemplate(
+  row: RawImportRow,
+  template: Template,
+  options: ContactRequirementOptions = {},
+): CleanedRow {
   const cleaned_data: RowData = {}
   const ai_changes: AiCellChange[] = []
-  const missing_fields: string[] = []
 
   if (!hasUsefulData(row.raw_data)) {
     return {
       ...row,
       cleaned_data,
       status: "skipped",
-      missing_fields,
+      missing_fields: [],
       skip_reason: "No useful data after deterministic cleanup.",
       ai_changes,
     }
@@ -167,11 +179,9 @@ export function cleanRowWithTemplate(row: RawImportRow, template: Template): Cle
     const normalized = normalizeTextSpelling(formatted, column)
 
     cleaned_data[column.key] = normalized
-
-    if (column.required && !normalized) {
-      missing_fields.push(column.key)
-    }
   }
+
+  const missing_fields = getMissingFieldsForTemplate(template, cleaned_data, options)
 
   const mappedValues = Object.values(cleaned_data).filter((value) => String(value ?? "").trim())
 
@@ -195,16 +205,97 @@ export function cleanRowWithTemplate(row: RawImportRow, template: Template): Cle
   }
 }
 
+export function getMissingFieldsForTemplate(
+  template: Template,
+  cleanedData: RowData,
+  options: ContactRequirementOptions = {},
+) {
+  const missing = new Set<string>()
+  const emailColumns = template.columns_config.filter(isEmailContactField)
+  const phoneColumns = template.columns_config.filter(isPhoneContactField)
+  const hasEmail = emailColumns.some((column) => hasValidEmailValue(cleanedData[column.key]))
+  const hasPhone = phoneColumns.some((column) => hasValidPhoneValue(cleanedData[column.key]))
+
+  for (const column of template.columns_config) {
+    const isContactRuleColumn = isEmailContactField(column) || isPhoneContactField(column)
+
+    if (isContactRuleColumn) {
+      continue
+    }
+
+    if (isNameField(column) && (hasEmail || hasPhone)) {
+      continue
+    }
+
+    if (column.required && !hasValue(cleanedData[column.key])) {
+      missing.add(column.key)
+    }
+  }
+
+  if (emailColumns.length > 0 && phoneColumns.length > 0) {
+    if (options.requireBothEmailPhone) {
+      if (!hasEmail) {
+        emailColumns.forEach((column) => missing.add(column.key))
+      }
+
+      if (!hasPhone) {
+        phoneColumns.forEach((column) => missing.add(column.key))
+      }
+    } else if (!hasEmail && !hasPhone) {
+      emailColumns.forEach((column) => missing.add(column.key))
+      phoneColumns.forEach((column) => missing.add(column.key))
+    }
+  } else {
+    for (const column of [...emailColumns, ...phoneColumns]) {
+      if (column.required && !hasValue(cleanedData[column.key])) {
+        missing.add(column.key)
+      }
+    }
+  }
+
+  return [...missing]
+}
+
+function isEmailContactField(column: TemplateColumn) {
+  const target = normalizeKey(`${column.key} ${column.label}`)
+  return target.includes("email")
+}
+
+function isPhoneContactField(column: TemplateColumn) {
+  const target = normalizeKey(`${column.key} ${column.label}`)
+  return target.includes("mobile") || target.includes("phone") || target.includes("whatsapp")
+}
+
+function isNameField(column: TemplateColumn) {
+  const target = normalizeKey(`${column.key} ${column.label}`)
+  return target === "name" || target.includes("customer_name") || target.includes("client_name") || target.includes("lead_name")
+}
+
+function hasValue(value: unknown) {
+  return String(value ?? "").trim().length > 0
+}
+
+function hasValidEmailValue(value: unknown) {
+  const text = String(value ?? "").trim()
+  return EMAIL_RE.test(text)
+}
+
+function hasValidPhoneValue(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "")
+  const last10 = digits.slice(-10)
+  return last10.length === 10 && /^[6-9]/.test(last10)
+}
+
 function findSourceValue(row: RowData, column: TemplateColumn) {
   const target = normalizeKey(`${column.key} ${column.label}`)
   const candidates = new Set([
-    normalizeKey(column.key),
-    normalizeKey(column.label),
-    ...column.source_hints.map(normalizeKey),
+    normalizeMeaningKey(column.key),
+    normalizeMeaningKey(column.label),
+    ...column.source_hints.map(normalizeMeaningKey),
   ])
 
   for (const [key, value] of Object.entries(row)) {
-    const normalized = normalizeKey(key)
+    const normalized = normalizeMeaningKey(key)
 
     if (target.includes("description") && isContactSourceKey(normalized)) {
       continue
@@ -216,7 +307,7 @@ function findSourceValue(row: RowData, column: TemplateColumn) {
   }
 
   for (const [key, value] of Object.entries(row)) {
-    const normalized = normalizeKey(key)
+    const normalized = normalizeMeaningKey(key)
 
     if (target.includes("description") && isContactSourceKey(normalized)) {
       continue
@@ -228,6 +319,13 @@ function findSourceValue(row: RowData, column: TemplateColumn) {
   }
 
   return ""
+}
+
+function normalizeMeaningKey(value: string) {
+  return normalizeKey(value)
+    .split("_")
+    .map((part) => HEADER_SYNONYMS[part] ?? part)
+    .join("_")
 }
 
 function extractTargetValue(value: unknown, column: TemplateColumn) {
@@ -442,6 +540,12 @@ const VALUE_SPELLING_FIXES: Array<[RegExp, string]> = [
   [/\bmumbia\b/gi, "Mumbai"],
 ]
 
+const HEADER_SYNONYMS: Record<string, string> = {
+  contri: "country",
+  cty: "city",
+  stat: "state",
+}
+
 const COUNTRY_NAMES = ["India"]
 
 const INDIAN_STATE_NAMES = [
@@ -477,14 +581,37 @@ const INDIAN_STATE_NAMES = [
 ]
 
 function formatDateLikeValue(value: string) {
-  if (!value) {
+  const text = value.trim()
+
+  if (!text) {
     return ""
   }
 
-  const parsed = new Date(value)
+  const dateOnly = text.split(/[T\s]+/)[0]
+  const slashOrDash = dateOnly.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/)
+
+  if (slashOrDash) {
+    const [, first, second, yearPart] = slashOrDash
+    const year = yearPart.length === 2 ? `20${yearPart}` : yearPart
+    const firstNumber = Number(first)
+    const secondNumber = Number(second)
+    const day = firstNumber > 12 ? firstNumber : secondNumber > 12 ? secondNumber : firstNumber
+    const month = firstNumber > 12 ? secondNumber : secondNumber > 12 ? firstNumber : secondNumber
+
+    return `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`
+  }
+
+  const iso = dateOnly.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+
+  if (iso) {
+    const [, year, month, day] = iso
+    return `${String(Number(day)).padStart(2, "0")}/${String(Number(month)).padStart(2, "0")}/${year}`
+  }
+
+  const parsed = new Date(text)
 
   if (Number.isNaN(parsed.getTime())) {
-    return value
+    return text
   }
 
   return new Intl.DateTimeFormat("en-GB").format(parsed)

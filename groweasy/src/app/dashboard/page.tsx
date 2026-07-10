@@ -87,7 +87,7 @@ async function DashboardTable() {
                   <TableCell>{job.final_saved_count || job.good_count}</TableCell>
                   <TableCell>{job.status}</TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="outline" render={<Link href={`/tables/${job.id}`} />}>
+                    <Button size="sm" variant="outline" render={<Link href={`/campaigns/${job.id}`} />}>
                       Open
                       <ArrowRightIcon />
                     </Button>

@@ -35,7 +35,7 @@ const primaryNav = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboardIcon },
   { title: "Upload", url: "/upload", icon: UploadCloudIcon },
   { title: "Templates", url: "/templates", icon: FileSpreadsheetIcon },
-  { title: "Campaigns", url: "/tables", icon: Table2Icon },
+  { title: "Campaigns", url: "/campaigns", icon: Table2Icon },
   { title: "Analytics", url: "/analytics", icon: BarChart3Icon },
   { title: "History", url: "/history", icon: HistoryIcon },
 ]

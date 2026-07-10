@@ -70,6 +70,7 @@ export function StartAiButton({
           dash_values_blank: localPreview?.dashValuesBlank ?? true,
           require_both_email_phone: localPreview?.requireBothEmailPhone ?? false,
           generate_description: localPreview?.generateDescription ?? false,
+          correct_spelling: localPreview?.correctSpelling ?? false,
         }),
       })
 

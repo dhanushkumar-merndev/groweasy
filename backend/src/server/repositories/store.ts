@@ -21,6 +21,7 @@ import type {
 import { invalidateAnalyticsCache, invalidateImportCache } from "../redis/cache.js"
 import { logger } from "../../lib/logger.js"
 import { ensureSchema, addHistoryEntry, listHistoryEntries } from "../db/db-history.js"
+import { getSupabaseServiceClient } from "../db/supabase.js"
 
 type Campaign = {
   id: string
@@ -38,10 +39,13 @@ type StoreState = {
   savedRows: SavedRow[]
   history: HistoryLog[]
   userApiKeys: Record<string, string>
+  userApiKeyModes: Record<string, boolean>
+  userAiSettings: Record<string, { batchSize: number; requestBatchSize: number }>
   campaigns: Campaign[]
 }
 
 const storeFilePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.data/store-state.json")
+const localStorePersistEnabled = process.env.LOCAL_STORE_PERSIST !== "false"
 
 function defaultState(): StoreState {
   return {
@@ -52,11 +56,17 @@ function defaultState(): StoreState {
     savedRows: [],
     history: [],
     userApiKeys: {},
+    userApiKeyModes: {},
+    userAiSettings: {},
     campaigns: [],
   }
 }
 
 function loadState(): StoreState {
+  if (!localStorePersistEnabled) {
+    return defaultState()
+  }
+
   if (!existsSync(storeFilePath)) {
     return defaultState()
   }
@@ -71,6 +81,8 @@ function loadState(): StoreState {
       savedRows: parsed.savedRows ?? [],
       history: parsed.history ?? [],
       userApiKeys: parsed.userApiKeys ?? {},
+      userApiKeyModes: parsed.userApiKeyModes ?? {},
+      userAiSettings: parsed.userAiSettings ?? {},
       campaigns: parsed.campaigns ?? [],
     }
   } catch (error) {
@@ -80,12 +92,103 @@ function loadState(): StoreState {
 }
 
 function persistState() {
+  if (!localStorePersistEnabled) {
+    return
+  }
+
   try {
     mkdirSync(dirname(storeFilePath), { recursive: true })
     writeFileSync(storeFilePath, JSON.stringify(state, null, 2))
   } catch (error) {
     logger.warn({ error }, "Failed to persist local store state")
   }
+}
+
+async function syncSavedRowsToSupabase(userId: string, importId: string, savedRows: SavedRow[]) {
+  const supabase = getSupabaseServiceClient()
+
+  if (!supabase) {
+    logger.info({ importId, savedCount: savedRows.length }, "Supabase not configured, saved rows kept locally")
+    return
+  }
+
+  const job = state.imports.find((item) => item.id === importId && (item.user_id === userId || item.user_id === demoUserId))
+  const now = new Date().toISOString()
+
+  try {
+    const { error: importError } = await supabase
+      .from("imports")
+      .upsert({
+        id: importId,
+        user_id: userId,
+        template_id: null,
+        file_name: job?.file_name ?? "Imported file",
+        import_name: job?.import_name ?? job?.file_name ?? "Imported file",
+        status: "saved",
+        prompt_version: job?.prompt_version ?? null,
+        model_used: job?.model_used ?? null,
+        total_sheets: job?.total_sheets ?? 0,
+        total_rows: job?.total_rows ?? savedRows.length,
+        good_count: job?.good_count ?? savedRows.length,
+        missing_count: job?.missing_count ?? 0,
+        skipped_count: job?.skipped_count ?? 0,
+        fixed_missing_count: job?.fixed_missing_count ?? 0,
+        final_saved_count: savedRows.length,
+        blank_rows_removed: job?.blank_rows_removed ?? 0,
+        duplicate_count: job?.duplicate_count ?? 0,
+        ai_changed_count: job?.ai_changed_count ?? 0,
+        missing_by_field: job?.missing_by_field ?? {},
+        sheet_summary: job?.sheet_summary ?? [],
+        updated_at: now,
+      }, { onConflict: "id" })
+
+    if (importError) {
+      throw importError
+    }
+
+    const { error: deleteError } = await supabase
+      .from("saved_rows")
+      .delete()
+      .eq("import_id", importId)
+
+    if (deleteError) {
+      throw deleteError
+    }
+
+    if (savedRows.length === 0) {
+      logger.info({ importId }, "Cleared Supabase saved rows")
+      return
+    }
+
+    const { error: insertError } = await supabase
+      .from("saved_rows")
+      .insert(savedRows.map((row) => ({
+        id: row.id,
+        user_id: row.user_id,
+        import_id: row.import_id,
+        sheet_id: isUuid(row.sheet_id) ? row.sheet_id : null,
+        sheet_name: row.sheet_name,
+        sheet_index: row.sheet_index,
+        row_index: row.row_index,
+        cleaned_data: row.cleaned_data,
+        ai_changes: row.ai_changes,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      })))
+
+    if (insertError) {
+      throw insertError
+    }
+
+    logger.info({ importId, savedCount: savedRows.length }, "Saved rows synced to Supabase")
+  } catch (error) {
+    logger.error({ error, importId, savedCount: savedRows.length }, "Failed to sync saved rows to Supabase")
+    throw error
+  }
+}
+
+function isUuid(value: string | null | undefined) {
+  return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))
 }
 
 const state: StoreState = loadState()
@@ -101,10 +204,11 @@ if (!state.templates.some((template) => template.user_id === demoUserId)) {
  * database replaces the in-memory repository.
  */
 logger.info({
+  mode: localStorePersistEnabled ? "local-json" : "memory-only",
   imports: state.imports.length,
   cleanedRows: state.cleanedRows.length,
   savedRows: state.savedRows.length,
-}, "Local store state loaded")
+}, localStorePersistEnabled ? "Local store state loaded" : "In-memory store initialized")
 
 ensureSchema()
 
@@ -342,7 +446,7 @@ export const store = {
     return true
   },
 
-  saveGoodRows(userId: string, importId: string, rows: CleanedRow[]) {
+  async saveGoodRows(userId: string, importId: string, rows: CleanedRow[]) {
     const goodRows = rows.filter((row) => row.status === "good")
     const savedRows: SavedRow[] = goodRows.map((row) => ({
       id: crypto.randomUUID(),
@@ -361,6 +465,7 @@ export const store = {
     logger.info({ userId, importId, savedCount: savedRows.length, totalInput: rows.length }, "Saving good rows")
     state.savedRows = [...state.savedRows.filter((row) => row.import_id !== importId), ...savedRows]
     persistState()
+    await syncSavedRowsToSupabase(userId, importId, savedRows)
     void invalidateImportCache(importId)
     void this.addHistory(userId, importId, "rows_saved", {
       saved_rows: savedRows.length,
@@ -411,8 +516,19 @@ export const store = {
 
   deleteApiKey(userId: string) {
     delete state.userApiKeys[userId]
+    delete state.userApiKeyModes[userId]
     persistState()
     logger.info({ userId }, "API key removed")
+  },
+
+  getUseUserApiKey(userId: string) {
+    return state.userApiKeyModes[userId] ?? false
+  },
+
+  setUseUserApiKey(userId: string, enabled: boolean) {
+    state.userApiKeyModes[userId] = enabled
+    persistState()
+    logger.info({ userId, enabled }, "User API key mode saved")
   },
 
   getApiKeyInfo(userId: string): { provider: string; model: string } | null {
@@ -423,6 +539,16 @@ export const store = {
     } catch {
       return null
     }
+  },
+
+  getAiSettings(userId: string) {
+    return state.userAiSettings[userId] ?? null
+  },
+
+  setAiSettings(userId: string, settings: { batchSize: number; requestBatchSize: number }) {
+    state.userAiSettings[userId] = settings
+    persistState()
+    logger.info({ userId, settings }, "AI settings saved")
   },
 
   listCampaigns(userId: string) {

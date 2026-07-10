@@ -1,24 +1,35 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react"
 
 import { DataGrid } from "@/components/data-grid"
+import { StatusCountCards } from "@/components/status-count-cards"
 import { Button } from "@/components/ui/button"
+import { getMissingFieldsForTemplate } from "@/lib/formatting"
 import type { CleanedRow, Template } from "@/lib/types"
 
 export function ReviewWorkspace({
   importId,
   rows,
   template,
+  requireBothEmailPhone = false,
 }: {
   importId: string
   rows: CleanedRow[]
   template: Template
+  requireBothEmailPhone?: boolean
 }) {
-  const [editableRows, setEditableRows] = useState(() => readReviewDraft(importId) ?? rows)
+  const [editableRows, setEditableRows] = useState(() =>
+    normalizeReviewRows(readReviewDraft(importId) ?? rows, template, { requireBothEmailPhone })
+  )
+  const summary = useMemo(() => summarizeReviewRows(editableRows), [editableRows])
+
+  useEffect(() => {
+    setEditableRows((currentRows) => normalizeReviewRows(currentRows, template, { requireBothEmailPhone }))
+  }, [requireBothEmailPhone, template])
 
   useEffect(() => {
     try {
@@ -30,9 +41,44 @@ export function ReviewWorkspace({
 
   return (
     <div className="grid min-w-0 gap-4">
-      <DataGrid rows={editableRows} template={template} onRowsChange={setEditableRows} />
+      <StatusCountCards summary={summary} />
+      <DataGrid
+        rows={editableRows}
+        template={template}
+        requireBothEmailPhone={requireBothEmailPhone}
+        onRowsChange={setEditableRows}
+      />
     </div>
   )
+}
+
+function normalizeReviewRows(
+  rows: CleanedRow[],
+  template: Template,
+  options: { requireBothEmailPhone?: boolean } = {},
+) {
+  return rows.map((row) => {
+    if (row.status === "skipped") {
+      return row
+    }
+
+    const missingFields = getMissingFieldsForTemplate(template, row.cleaned_data, options)
+
+    return {
+      ...row,
+      status: missingFields.length > 0 ? "missing" as const : "good" as const,
+      missing_fields: missingFields,
+    }
+  })
+}
+
+function summarizeReviewRows(rows: CleanedRow[]) {
+  return {
+    good_count: rows.filter((row) => row.status === "good").length,
+    missing_count: rows.filter((row) => row.status === "missing").length,
+    skipped_count: rows.filter((row) => row.status === "skipped").length,
+    ai_changed_count: rows.reduce((total, row) => total + row.ai_changes.length, 0),
+  }
 }
 
 export function ReviewNav({ importId }: { importId: string }) {

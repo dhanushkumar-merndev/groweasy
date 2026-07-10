@@ -143,12 +143,12 @@ function rowsFromMatrix(matrix: string[][], sourceSheet: string, sourceSheetInde
   const headers = normalizeHeaders(headerRow)
   const dataRows = dropTrailingEmptyRows(matrix.slice(1))
 
-  return dataRows.map((row, rowIndex) => ({
-    source_sheet: sourceSheet,
-    source_sheet_index: sourceSheetIndex,
-    source_row_index: rowIndex + 2,
-    data: rowDataFromCells(headers, row),
-  }))
+	  return dataRows.map((row, rowIndex) => ({
+	    source_sheet: sourceSheet,
+	    source_sheet_index: sourceSheetIndex,
+	    source_row_index: rowIndex + 1,
+	    data: rowDataFromCells(headers, row),
+	  }))
 }
 
 function rowDataFromCells(headers: string[], cells: string[]) {

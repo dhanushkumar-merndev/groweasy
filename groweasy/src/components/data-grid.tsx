@@ -9,6 +9,7 @@ import { EditableCell } from "@/components/editable-cell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { getMissingFieldsForTemplate } from "@/lib/formatting"
 import type { CleanedRow, RowData, RowStatus, Template } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -45,10 +46,12 @@ const CLEANED_COLUMN_WIDTHS: Record<string, string> = {
 export function DataGrid({
   rows,
   template,
+  requireBothEmailPhone = false,
   onRowsChange,
 }: {
   rows: CleanedRow[]
   template: Template
+  requireBothEmailPhone?: boolean
   onRowsChange?: (rows: CleanedRow[]) => void
 }) {
   const suggestions = useMemo(() => buildSuggestions(rows), [rows])
@@ -60,9 +63,7 @@ export function DataGrid({
       }
 
       const cleaned_data: RowData = { ...row.cleaned_data, [key]: value }
-      const missing_fields = template.columns_config
-        .filter((column) => column.required && !String(cleaned_data[column.key] ?? "").trim())
-        .map((column) => column.key)
+      const missing_fields = getMissingFieldsForTemplate(template, cleaned_data, { requireBothEmailPhone })
       const status: RowStatus = missing_fields.length > 0 ? "missing" : "good"
 
       return {

@@ -114,6 +114,7 @@ export const validateImportSchema = z.object({
   dash_values_blank: z.boolean().default(true),
   require_both_email_phone: z.boolean().default(false),
   generate_description: z.boolean().default(false),
+  correct_spelling: z.boolean().default(false),
 })
 
 export const saveImportSchema = z.object({

@@ -35,7 +35,7 @@ function StepRow({
       </div>
       <div>
         <p className="text-sm font-medium">{label}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+        <div className="mt-0.5 text-xs text-muted-foreground">{renderDetailWithTokenWarning(detail)}</div>
       </div>
     </div>
   )
@@ -67,10 +67,12 @@ export function ValidateClient({
   const [stepIdx, setStepIdx] = useState(0)
   const [removeBlankRows, setRemoveBlankRows] = useState<boolean | null>(null)
   const [dashValuesBlank, setDashValuesBlank] = useState<boolean | null>(null)
+  const [correctSpelling, setCorrectSpelling] = useState<boolean | null>(null)
   const [requireBothEmailPhone, setRequireBothEmailPhone] = useState<boolean | null>(null)
   const [generateDescription, setGenerateDescription] = useState<boolean | null>(null)
   const resolvedRemoveBlankRows = removeBlankRows ?? initialRemoveBlankRows
   const resolvedDashValuesBlank = dashValuesBlank ?? initialDashValuesBlank
+  const resolvedCorrectSpelling = correctSpelling ?? false
   const resolvedRequireBothEmailPhone = requireBothEmailPhone ?? false
   const resolvedGenerateDescription = generateDescription ?? (templateName === "Grow Easy CRM")
 
@@ -79,17 +81,17 @@ export function ValidateClient({
       { id: "read", label: "Reading raw rows", detail: "Scanning all imported cells" },
       {
         id: "blank",
-        label: resolvedRemoveBlankRows ? "Removing rows with blanks" : "Keeping rows with blanks",
+        label: resolvedRemoveBlankRows ? "Removing empty source rows" : "Keeping empty source rows",
         detail: resolvedRemoveBlankRows
-          ? "Filtering any row where one or more cells are empty"
-          : "Rows with blank cells will stay in the preview",
+          ? "Filtering rows where every source cell is blank"
+          : "Completely empty rows will stay in the preview",
       },
       {
         id: "dash",
         label: resolvedDashValuesBlank ? "Normalizing dash values" : "Keeping dash values",
         detail: resolvedDashValuesBlank
-          ? 'Converting "-" and "--" to empty values'
-          : 'Dash values will stay as-is in the preview',
+          ? 'Converting "-", "--", "#", "###", and placeholder values to blank'
+          : "Placeholder values will stay as-is in the preview",
       },
       { id: "verify", label: "Verifying data integrity", detail: "Checking row counts and column alignment" },
     ]
@@ -106,6 +108,7 @@ export function ValidateClient({
       if (savedState.phase === "done") {
         setRemoveBlankRows(savedState.removeBlankRows)
         setDashValuesBlank(savedState.dashValuesBlank)
+        setCorrectSpelling(savedState.correctSpelling ?? false)
         setRequireBothEmailPhone(savedState.requireBothEmailPhone ?? false)
         setGenerateDescription(savedState.generateDescription ?? false)
         setQuestionStep(savedState.questionStep)
@@ -115,6 +118,7 @@ export function ValidateClient({
 
       setRemoveBlankRows(savedState.removeBlankRows)
       setDashValuesBlank(savedState.dashValuesBlank)
+      setCorrectSpelling(savedState.correctSpelling ?? null)
       setRequireBothEmailPhone(savedState.requireBothEmailPhone ?? null)
       setGenerateDescription(savedState.generateDescription ?? null)
       setQuestionStep(savedState.questionStep)
@@ -155,6 +159,7 @@ export function ValidateClient({
         blankRowsRemoved: resolvedRemoveBlankRows ? rows.length - finalRows.length : 0,
         removeBlankRows: resolvedRemoveBlankRows,
         dashValuesBlank: resolvedDashValuesBlank,
+        correctSpelling: resolvedCorrectSpelling,
         requireBothEmailPhone: resolvedRequireBothEmailPhone,
         generateDescription: resolvedGenerateDescription,
       })
@@ -173,9 +178,10 @@ export function ValidateClient({
 
       saveValidateSession(importId, {
         phase: "done",
-        questionStep: 3,
+        questionStep: templateName === "Grow Easy CRM" ? 4 : 3,
         removeBlankRows: resolvedRemoveBlankRows,
         dashValuesBlank: resolvedDashValuesBlank,
+        correctSpelling: resolvedCorrectSpelling,
         requireBothEmailPhone: resolvedRequireBothEmailPhone,
         generateDescription: resolvedGenerateDescription,
       })
@@ -186,7 +192,7 @@ export function ValidateClient({
     return () => {
       cancelled = true
     }
-  }, [basePath, importId, phase, resolvedDashValuesBlank, resolvedRemoveBlankRows, resolvedRequireBothEmailPhone, resolvedGenerateDescription, router, rows])
+  }, [basePath, importId, phase, resolvedDashValuesBlank, resolvedRemoveBlankRows, resolvedCorrectSpelling, resolvedRequireBothEmailPhone, resolvedGenerateDescription, router, rows, templateName])
 
   const setupQuestions = useMemo(() => {
     const questions: {
@@ -195,8 +201,8 @@ export function ValidateClient({
     }[] = [
       {
         key: "blank",
-        label: "Remove rows with blank cells",
-        detail: "Delete the whole row if any cell is empty",
+        label: "Remove empty source rows",
+        detail: "Before AI, remove rows where every source cell is blank.",
         value: removeBlankRows,
         onAnswer: (nextValue: boolean) => {
           saveValidateSession(importId, {
@@ -204,6 +210,7 @@ export function ValidateClient({
             questionStep: 1,
             removeBlankRows: nextValue,
             dashValuesBlank,
+            correctSpelling,
             requireBothEmailPhone,
           })
           setRemoveBlankRows(nextValue)
@@ -212,8 +219,8 @@ export function ValidateClient({
       },
       {
         key: "dash",
-        label: "Treat dash (-) values as blank",
-        detail: 'Convert "-" or "--" cells to empty string',
+        label: "Treat garbage values as blank",
+        detail: 'Convert "-", "--", "#", "##", "###", "test", "sample", and similar placeholders to empty.',
         value: dashValuesBlank,
         onAnswer: (nextValue: boolean) => {
           saveValidateSession(importId, {
@@ -221,6 +228,7 @@ export function ValidateClient({
             questionStep: 2,
             removeBlankRows: removeBlankRows ?? initialRemoveBlankRows,
             dashValuesBlank: nextValue,
+            correctSpelling,
             requireBothEmailPhone,
             generateDescription,
           })
@@ -230,38 +238,63 @@ export function ValidateClient({
       },
     ]
 
-    if (templateName === "Grow Easy CRM") {
-      questions.push({
-        key: "description",
-        label: "Generate description from row data",
-        detail: "AI will auto-fill missing descriptions using available name, project, and notes.",
+    const spellingQuestionIndex = questions.length
+    questions.push({
+      key: "spelling",
+      label: "Correct spelling with AI",
+      detail: "Fix clear spelling mistakes in text fields from your selected template. Shows yellow review highlights and uses more AI output tokens.",
+      value: correctSpelling,
+      onAnswer: (nextValue: boolean) => {
+        saveValidateSession(importId, {
+          phase: "setup",
+          questionStep: spellingQuestionIndex + 1,
+          removeBlankRows: removeBlankRows ?? initialRemoveBlankRows,
+          dashValuesBlank: dashValuesBlank ?? initialDashValuesBlank,
+          correctSpelling: nextValue,
+          requireBothEmailPhone,
+          generateDescription,
+        })
+        setCorrectSpelling(nextValue)
+        setQuestionStep(spellingQuestionIndex + 1)
+      },
+    })
+
+	    if (templateName === "Grow Easy CRM") {
+      const descriptionQuestionIndex = questions.length
+	      questions.push({
+	        key: "description",
+	        label: "Generate text from row data",
+	        detail: "Yes lets AI write a row-specific text value for the matching description or notes field. Yellow review highlights are shown; with spelling correction this uses more AI tokens.",
         value: generateDescription,
         onAnswer: (nextValue: boolean) => {
           saveValidateSession(importId, {
             phase: "setup",
-            questionStep: 3,
+            questionStep: descriptionQuestionIndex + 1,
             removeBlankRows: removeBlankRows ?? initialRemoveBlankRows,
             dashValuesBlank: dashValuesBlank ?? initialDashValuesBlank,
+            correctSpelling,
             requireBothEmailPhone,
             generateDescription: nextValue,
           })
           setGenerateDescription(nextValue)
-          setQuestionStep(3)
+          setQuestionStep(descriptionQuestionIndex + 1)
         },
       })
     }
 
-    questions.push({
-      key: "contact",
-        label: "Require both email and phone",
-        detail: "Yes needs both fields. No accepts either email or phone.",
+    const contactQuestionIndex = questions.length
+	    questions.push({
+	      key: "contact",
+	        label: "Require both email and phone",
+	        detail: "After AI extraction: Yes needs both email and phone. No accepts either one; both missing is invalid.",
         value: requireBothEmailPhone,
         onAnswer: (nextValue: boolean) => {
           saveValidateSession(importId, {
             phase: "cleaning",
-            questionStep: questions.length,
+            questionStep: contactQuestionIndex,
             removeBlankRows: removeBlankRows ?? initialRemoveBlankRows,
             dashValuesBlank: dashValuesBlank ?? initialDashValuesBlank,
+            correctSpelling: resolvedCorrectSpelling,
             requireBothEmailPhone: nextValue,
             generateDescription: resolvedGenerateDescription,
           })
@@ -271,10 +304,11 @@ export function ValidateClient({
       })
 
     return questions
-  }, [importId, templateName, removeBlankRows, dashValuesBlank, requireBothEmailPhone, generateDescription, resolvedGenerateDescription, initialRemoveBlankRows, initialDashValuesBlank])
+  }, [importId, templateName, removeBlankRows, dashValuesBlank, correctSpelling, requireBothEmailPhone, generateDescription, resolvedCorrectSpelling, resolvedGenerateDescription, initialRemoveBlankRows, initialDashValuesBlank])
 
-  const activeQuestion = setupQuestions[questionStep]
-  const visibleQuestions = setupQuestions.slice(0, questionStep + 1)
+  const safeQuestionStep = Math.min(questionStep, Math.max(0, setupQuestions.length - 1))
+  const activeQuestion = setupQuestions[safeQuestionStep]
+  const visibleQuestions = setupQuestions.slice(0, safeQuestionStep + 1)
 
   if (phase === "setup") {
     return (
@@ -289,11 +323,11 @@ export function ValidateClient({
             <QuestionOption
               key={question.key}
               checked={question.value}
-              onCheckedChange={index === questionStep ? (value) => activeQuestion.onAnswer(Boolean(value)) : undefined}
+              onCheckedChange={index === safeQuestionStep ? (value) => activeQuestion.onAnswer(Boolean(value)) : undefined}
               label={question.label}
               detail={question.detail}
               disabled={index < questionStep}
-              active={index === questionStep}
+              active={index === safeQuestionStep}
             />
           ))}
         </div>
@@ -391,7 +425,7 @@ function QuestionOption({
     >
       <div className="min-w-0 text-left">
         <p className="text-sm font-medium">{label}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+        <div className="mt-0.5 text-xs text-muted-foreground">{renderDetailWithTokenWarning(detail)}</div>
       </div>
       <div
         className={cn(
@@ -430,6 +464,26 @@ function QuestionOption({
   )
 }
 
+function renderDetailWithTokenWarning(detail: string) {
+  const tokenWarning = detail.match(/more AI(?: output)? tokens/i)?.[0]
+
+  if (!tokenWarning) {
+    return detail
+  }
+
+  const [before, after = ""] = detail.split(tokenWarning)
+
+  return (
+    <>
+      {before}
+      <span className="font-semibold text-amber-400/85">
+        {tokenWarning}
+      </span>
+      {after}
+    </>
+  )
+}
+
 function normalizeDashValues(rowData: RawImportRow["raw_data"]) {
   return Object.fromEntries(
     Object.entries(rowData).map(([key, value]) => {
@@ -448,6 +502,7 @@ type ValidateSessionState = {
   questionStep: number
   removeBlankRows: boolean | null
   dashValuesBlank: boolean | null
+  correctSpelling?: boolean | null
   requireBothEmailPhone?: boolean | null
   generateDescription?: boolean | null
 }

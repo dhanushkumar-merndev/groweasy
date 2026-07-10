@@ -23,7 +23,7 @@ export function EditableCell({
   const [localValue, setLocalValue] = useState(value === null || value === undefined ? "" : String(value))
 
   return (
-    <div className={cn("min-w-0 flex-1", changed && "bg-primary/10")}>
+    <div className={cn("min-w-0 flex-1", changed && "bg-amber-500/10")}>
       <Input
         value={localValue}
         list={suggestions?.length ? listId : undefined}
@@ -32,7 +32,7 @@ export function EditableCell({
           "h-7 w-full rounded-[5px] border-transparent bg-transparent px-2 text-sm shadow-none ring-0 transition-colors",
           "hover:border-border hover:bg-background/70 focus-visible:border-ring focus-visible:bg-background focus-visible:ring-1 focus-visible:ring-ring/40",
           invalid && "border-destructive/70 bg-destructive/8 text-foreground hover:border-destructive focus-visible:border-destructive focus-visible:ring-destructive/25",
-          changed && !invalid && "border-primary/35 bg-primary/8",
+          changed && !invalid && "border-amber-400/70 bg-gradient-to-r from-amber-500/18 via-yellow-400/12 to-transparent",
         )}
         onChange={(event) => {
           setLocalValue(event.target.value)

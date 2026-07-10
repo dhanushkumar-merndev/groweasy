@@ -4,7 +4,7 @@ const protectedPrefixes = [
   "/dashboard",
   "/upload",
   "/templates",
-  "/tables",
+  "/campaigns",
   "/analytics",
   "/history",
   "/settings",

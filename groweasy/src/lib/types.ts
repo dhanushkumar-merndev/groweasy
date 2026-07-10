@@ -178,6 +178,7 @@ export type ValidationResult = {
   dash_values_blank?: boolean
   require_both_email_phone?: boolean
   generate_description?: boolean
+  correct_spelling?: boolean
 }
 
 export type HistoryAction =

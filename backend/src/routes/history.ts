@@ -7,7 +7,7 @@ import { logger } from "../lib/logger.js"
 
 const router = Router()
 
-const EXPORT_ACTIONS = new Set(["export_done", "google_sheet_export_done"])
+const EXPORT_ACTIONS = new Set(["rows_saved", "export_done", "google_sheet_export_done"])
 
 router.get("/", async (req, res) => {
   try {

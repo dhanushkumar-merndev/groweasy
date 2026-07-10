@@ -2,21 +2,36 @@
 
 import { useMemo, useRef, useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
+import { ChevronLeftIcon, ChevronRightIcon, SaveIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { EditableCell } from "@/components/editable-cell"
 import { api } from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import type { SavedRow, Template } from "@/lib/types"
+import { cn } from "@/lib/utils"
+
+const PAGE_SIZE = 50
+const META_COLUMNS = "minmax(118px,118px) minmax(64px,64px)"
+const ACTION_COLUMN = "minmax(92px,92px)"
+const CLEANED_COLUMN_WIDTHS: Record<string, string> = {
+  created_at: "minmax(140px,140px)",
+  name: "minmax(200px,200px)",
+  email: "minmax(240px,240px)",
+  country_code: "minmax(130px,130px)",
+  mobile_without_country_code: "minmax(220px,220px)",
+  company: "minmax(170px,170px)",
+  city: "minmax(150px,150px)",
+  state: "minmax(150px,150px)",
+  country: "minmax(180px,180px)",
+  lead_owner: "minmax(150px,150px)",
+  crm_status: "minmax(170px,170px)",
+  crm_note: "minmax(240px,240px)",
+  data_source: "minmax(170px,170px)",
+  possession_time: "minmax(170px,170px)",
+  description: "minmax(260px,260px)",
+}
 
 export function VirtualTable({
   importId,
@@ -30,7 +45,17 @@ export function VirtualTable({
   const parentRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState("")
   const [localRows, setLocalRows] = useState(rows)
+  const [page, setPage] = useState(0)
+  const [savingRows, setSavingRows] = useState<Record<string, boolean>>({})
+  const [dirtyRows, setDirtyRows] = useState<Record<string, boolean>>({})
   const columns = template.columns_config
+  const gridTemplateColumns = useMemo(
+    () =>
+      `${META_COLUMNS} ${columns
+        .map((column) => CLEANED_COLUMN_WIDTHS[column.key] ?? "minmax(170px,170px)")
+        .join(" ")} ${ACTION_COLUMN}`,
+    [columns],
+  )
   const suggestions = useMemo(() => {
     const values: Record<string, Set<string>> = {}
 
@@ -52,16 +77,27 @@ export function VirtualTable({
   const filteredRows = useMemo(
     () =>
       localRows.filter((row) =>
-        query ? JSON.stringify(row.cleaned_data).toLowerCase().includes(query.toLowerCase()) : true
+        query
+          ? `${row.sheet_name} ${row.row_index} ${JSON.stringify(row.cleaned_data)}`
+              .toLowerCase()
+              .includes(query.toLowerCase())
+          : true
       ),
     [localRows, query]
   )
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
+  const currentPage = Math.min(page, pageCount - 1)
+  const pageStart = currentPage * PAGE_SIZE
+  const pageEnd = Math.min(pageStart + PAGE_SIZE, filteredRows.length)
+  const pageRows = useMemo(() => filteredRows.slice(pageStart, pageEnd), [filteredRows, pageEnd, pageStart])
   const rowVirtualizer = useVirtualizer({
-    count: filteredRows.length,
+    count: pageRows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 48,
+    estimateSize: () => 36,
     overscan: 12,
   })
+  const canPreviousPage = currentPage > 0
+  const canNextPage = currentPage < pageCount - 1
 
   function updateCell(rowId: string, key: string, value: string) {
     setLocalRows((current) =>
@@ -69,16 +105,29 @@ export function VirtualTable({
         row.id === rowId ? { ...row, cleaned_data: { ...row.cleaned_data, [key]: value } } : row
       )
     )
+    setDirtyRows((current) => ({ ...current, [rowId]: true }))
   }
 
   async function saveRow(row: SavedRow) {
+    setSavingRows((current) => ({ ...current, [row.id]: true }))
     const response = await api(`/tables/${importId}/rows/${row.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cleaned_data: row.cleaned_data }),
     })
+    setSavingRows((current) => ({ ...current, [row.id]: false }))
 
-    toast[response.ok ? "success" : "error"](response.ok ? "Row saved." : "Unable to save row.")
+    if (response.ok) {
+      setDirtyRows((current) => ({ ...current, [row.id]: false }))
+      toast.success("Row saved.")
+    } else {
+      toast.error("Unable to save row.")
+    }
+  }
+
+  function goToPage(nextPage: number) {
+    setPage(Math.min(Math.max(nextPage, 0), pageCount - 1))
+    parentRef.current?.scrollTo({ top: 0, left: parentRef.current.scrollLeft })
   }
 
   return (
@@ -86,52 +135,116 @@ export function VirtualTable({
       <Input
         value={query}
         placeholder="Search saved rows"
-        onChange={(event) => setQuery(event.target.value)}
+        onChange={(event) => {
+          setQuery(event.target.value)
+          setPage(0)
+        }}
       />
-      <div ref={parentRef} className="h-[640px] overflow-auto rounded-lg border">
-        <Table>
-          <TableHeader className="sticky top-0 z-10 bg-muted">
-            <TableRow>
-              <TableHead className="min-w-40">Sheet</TableHead>
+      <div className="overflow-hidden rounded-lg border bg-background">
+        <div ref={parentRef} className="raw-preview-scroll max-h-[clamp(360px,calc(100vh-315px),680px)] overflow-auto">
+          <div className="min-w-max">
+            <div
+              className="sticky top-0 z-10 grid border-b bg-muted text-sm font-medium text-foreground"
+              style={{ gridTemplateColumns }}
+            >
+              <GridCell head>Sheet</GridCell>
+              <GridCell head>Row</GridCell>
               {columns.map((column) => (
-                <TableHead key={column.key} className="min-w-48">
+                <GridCell key={column.key} head>
                   {column.label}
-                </TableHead>
+                </GridCell>
               ))}
-              <TableHead className="min-w-24">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: "relative" }}>
+              <GridCell head>Save</GridCell>
+            </div>
+            <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-              const row = filteredRows[virtualRow.index]
+              const row = pageRows[virtualRow.index]
 
               return (
-                <TableRow
+                <div
                   key={row.id}
-                  className="absolute left-0 right-0 grid"
-                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                  className="absolute left-0 right-0 grid min-h-9 border-b bg-[color-mix(in_oklch,var(--primary),transparent_96%)] text-sm transition-colors hover:bg-muted/45"
+                  style={{ gridTemplateColumns, transform: `translateY(${virtualRow.start}px)` }}
                 >
-                  <TableCell className="min-w-40">{row.sheet_name}</TableCell>
+                  <GridCell title={row.sheet_name}>{row.sheet_name}</GridCell>
+                  <GridCell>{row.row_index}</GridCell>
                   {columns.map((column) => (
-                    <TableCell key={column.key} className="min-w-48">
+                    <GridCell key={column.key}>
                       <EditableCell
                         value={row.cleaned_data[column.key] ?? ""}
                         suggestions={suggestions[column.key]}
                         onChange={(value) => updateCell(row.id, column.key, value)}
                       />
-                    </TableCell>
+                    </GridCell>
                   ))}
-                  <TableCell className="min-w-24">
-                    <Button size="sm" variant="outline" onClick={() => void saveRow(row)}>
-                      Save
+                  <GridCell>
+                    <Button
+                      size="sm"
+                      variant={dirtyRows[row.id] ? "default" : "outline"}
+                      disabled={savingRows[row.id]}
+                      onClick={() => void saveRow(row)}
+                    >
+                      <SaveIcon className="size-3.5" />
+                      {savingRows[row.id] ? "Saving" : "Save"}
                     </Button>
-                  </TableCell>
-                </TableRow>
+                  </GridCell>
+                </div>
               )
             })}
-          </TableBody>
-        </Table>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-2 border-t bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">
+            Showing <span className="font-medium text-foreground">{filteredRows.length ? pageStart + 1 : 0}</span>-
+            <span className="font-medium text-foreground">{pageEnd}</span> of{" "}
+            <span className="font-medium text-foreground">{filteredRows.length}</span> rows
+          </p>
+          <div className="flex items-center justify-between gap-2 sm:justify-end">
+            <span className="text-xs text-muted-foreground">
+              Page {currentPage + 1} of {pageCount}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => goToPage(currentPage - 1)}
+                disabled={!canPreviousPage}
+              >
+                <ChevronLeftIcon className="size-4" />
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={!canNextPage}
+              >
+                Next
+                <ChevronRightIcon className="size-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
+    </div>
+  )
+}
+
+function GridCell({ children, head = false, title }: { children: React.ReactNode; head?: boolean; title?: string }) {
+  const primitiveContent = typeof children === "string" || typeof children === "number"
+
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 items-center overflow-hidden whitespace-nowrap border-r border-border/45 px-2 last:border-r-0",
+        head ? "h-10 py-2 text-xs font-semibold uppercase tracking-normal text-muted-foreground" : "h-9 py-1.5",
+      )}
+      title={title ?? (primitiveContent ? String(children) : undefined)}
+    >
+      {primitiveContent ? <span className="block min-w-0 truncate">{children}</span> : children}
     </div>
   )
 }

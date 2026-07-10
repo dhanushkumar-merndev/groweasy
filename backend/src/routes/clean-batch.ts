@@ -5,7 +5,7 @@ import { cleanBatchRequestSchema, cleanBatchResultSchema } from "../lib/schemas.
 import { normalizeKey } from "../lib/formatting.js"
 import { handleRouteError, jsonOk, parseJsonBody } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
-import { getUserDecryptedKey } from "./settings.js"
+import { getUserDecryptedKey, shouldUseUserApiKey } from "./settings.js"
 import { logger } from "../lib/logger.js"
 
 type CleanBatchRequest = z.infer<typeof cleanBatchRequestSchema>
@@ -54,7 +54,7 @@ router.post("/", async (req, res) => {
     const batch = parseJsonBody(req.body, cleanBatchRequestSchema)
     logger.info({ batchId: batch.batch_id, rowCount: batch.rows.length }, "Clean batch request received")
 
-    const userKey = getUserDecryptedKey(user.id)
+    const userKey = await shouldUseUserApiKey(user.id) ? await getUserDecryptedKey(user.id) : null
     const apiKeys = userKey ? [userKey.key, ...getGroqApiKeys()] : getGroqApiKeys()
     const fieldMap = await inferFieldMap(batch, apiKeys)
     const deterministicResult = cleanRowsWithFieldMap(batch, fieldMap)

@@ -11,6 +11,7 @@ import { store } from "../server/repositories/store.js"
 import { processImportRows, getProcessedRows } from "../server/ai/excel-cleaner.js"
 import { buildExcelExport } from "../server/imports/export.js"
 import { exportRowsToGoogleSheet } from "../server/google/sheets.js"
+import { getUserAiSettings } from "./settings.js"
 import { logger } from "../lib/logger.js"
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
@@ -98,6 +99,7 @@ router.post("/batch", async (req, res) => {
     const dashValuesBlank = req.body.dash_values_blank !== false
     const requireBothEmailPhone = req.body.require_both_email_phone === true
     const generateDescription = req.body.generate_description === true
+    const correctSpelling = req.body.correct_spelling === true
 
     const template = store.getTemplate(user.id, templateId)
 
@@ -153,6 +155,7 @@ router.post("/batch", async (req, res) => {
         dash_values_blank: dashValuesBlank,
         require_both_email_phone: requireBothEmailPhone,
         generate_description: generateDescription,
+        correct_spelling: correctSpelling,
       })
       return jsonOk(res, {
         import: existingJob,
@@ -167,6 +170,7 @@ router.post("/batch", async (req, res) => {
           dash_values_blank: dashValuesBlank,
           require_both_email_phone: requireBothEmailPhone,
           generate_description: generateDescription,
+          correct_spelling: correctSpelling,
         },
         next: `/upload/${importId}/validate`,
       })
@@ -194,6 +198,7 @@ router.post("/batch", async (req, res) => {
       dash_values_blank: dashValuesBlank,
       require_both_email_phone: requireBothEmailPhone,
       generate_description: generateDescription,
+      correct_spelling: correctSpelling,
     }
     await setCache(cacheKeys(importId).validation, validation)
 
@@ -264,6 +269,7 @@ router.post("/:id/validate", async (req, res) => {
     const dashValuesBlank = body.rows ? body.dash_values_blank : validation.dash_values_blank
     const requireBothEmailPhone = body.rows ? body.require_both_email_phone : validation.require_both_email_phone
     const generateDescription = body.rows ? body.generate_description : validation.generate_description
+    const correctSpelling = body.rows ? body.correct_spelling : validation.correct_spelling
     const sheets = body.rows ? summarizeSheets(validation.sheets, rows) : validation.sheets
     const warnings = mergeBlankRowWarning(validation.warnings, blankRowsRemoved)
     const nextValidation: ValidationResult = {
@@ -277,6 +283,7 @@ router.post("/:id/validate", async (req, res) => {
       dash_values_blank: dashValuesBlank,
       require_both_email_phone: requireBothEmailPhone,
       generate_description: generateDescription,
+      correct_spelling: correctSpelling,
     }
 
     store.setSheets(id, sheets)
@@ -391,6 +398,7 @@ router.post("/:id/process", async (req, res) => {
       sheets: store.listSheets(id),
       requireBothEmailPhone: validation?.require_both_email_phone ?? false,
       generateDescription: validation?.generate_description ?? false,
+      correctSpelling: validation?.correct_spelling ?? false,
     })
 
     logger.info({ importId: id, modelUsed: result.modelUsed, batches: result.batches.length, rows: result.rows.length, tokenUsage: result.tokenUsage }, "Processing complete")
@@ -430,7 +438,8 @@ router.get("/:id/stream", async (req, res) => {
       await invalidateProcessedImportCache(id)
     }
 
-    const totalBatches = Math.max(1, Math.ceil(rows.length / Number(process.env.AI_BATCH_SIZE ?? 75)))
+    const aiSettings = await getUserAiSettings(user.id)
+    const totalBatches = Math.max(1, Math.ceil(rows.length / aiSettings.batchSize))
     const totalRows = rows.length
 
     res.writeHead(200, {
@@ -461,6 +470,7 @@ router.get("/:id/stream", async (req, res) => {
       sheets: store.listSheets(id),
       requireBothEmailPhone: validation?.require_both_email_phone ?? false,
       generateDescription: validation?.generate_description ?? false,
+      correctSpelling: validation?.correct_spelling ?? false,
       onBatchStart: async ({ batchNo, batchRows, aiRows, model }) => {
         if (closed) return
 
@@ -473,7 +483,7 @@ router.get("/:id/stream", async (req, res) => {
           model,
         })}\n\n`)
       },
-      onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage, aiRows, aiUsed }) => {
+      onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage, batchTokenUsage, aiRows, aiUsed }) => {
         if (closed) return
 
         goodCount += batch.summary.good_count
@@ -503,6 +513,9 @@ router.get("/:id/stream", async (req, res) => {
         if (tokenUsage.total_tokens > 0) {
           res.write(`data: ${JSON.stringify({
             type: "token_usage",
+            batch_no: batchNo,
+            total_batches: totalBatches,
+            batch_token_usage: batchTokenUsage,
             token_usage: tokenUsage,
           })}\n\n`)
         }
@@ -568,7 +581,7 @@ router.post("/:id/save", async (req, res) => {
 
     const rows = body.rows ?? (await getProcessedRows(id, job.updated_at))
     const selectedRows = body.row_ids ? rows.filter((row) => body.row_ids?.includes(row.id)) : rows
-    const savedRows = store.saveGoodRows(user.id, id, selectedRows)
+    const savedRows = await store.saveGoodRows(user.id, id, selectedRows)
 
     store.updateImport(user.id, id, {
       status: "saved",

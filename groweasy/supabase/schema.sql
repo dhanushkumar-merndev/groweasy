@@ -81,6 +81,19 @@ create table if not exists analytics_views (
   updated_at timestamptz default now()
 );
 
+create table if not exists user_ai_settings (
+  user_id text primary key,
+  provider text not null default 'groq',
+  model text not null default 'openai/gpt-oss-120b',
+  encrypted_api_key text,
+  use_user_api_key boolean not null default false,
+  detailed_review_enabled boolean not null default true,
+  batch_size int,
+  request_batch_size int,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 create index if not exists idx_templates_user_id on templates(user_id);
 create index if not exists idx_imports_user_id on imports(user_id);
 create index if not exists idx_imports_template_id on imports(template_id);
@@ -96,6 +109,7 @@ alter table import_sheets enable row level security;
 alter table saved_rows enable row level security;
 alter table history_logs enable row level security;
 alter table analytics_views enable row level security;
+alter table user_ai_settings enable row level security;
 
 create policy "Users manage own templates" on templates
   using (auth.uid()::text = user_id)
@@ -160,5 +174,9 @@ create policy "Users manage own history" on history_logs
   with check (auth.uid()::text = user_id);
 
 create policy "Users manage own analytics views" on analytics_views
+  using (auth.uid()::text = user_id)
+  with check (auth.uid()::text = user_id);
+
+create policy "Users manage own AI settings" on user_ai_settings
   using (auth.uid()::text = user_id)
   with check (auth.uid()::text = user_id);

@@ -2,7 +2,8 @@
 
 import Link from "next/link"
 import { useMemo, useState } from "react"
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { api } from "@/lib/api-client"
 import type { HistoryLog } from "@/lib/types"
 
 const PAGE_SIZE = 50
@@ -26,6 +28,27 @@ export function HistoryTable({ history }: { history: HistoryLog[] }) {
     () => history.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
     [history, page],
   )
+
+  async function exportImport(importId: string) {
+    const response = await api(`/imports/${importId}/export/excel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "all_good" }),
+    })
+
+    if (!response.ok) {
+      toast.error("Excel export failed.")
+      return
+    }
+
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = "cleaned-data.xlsx"
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <Card className="flex min-h-0 flex-1 flex-col">
@@ -61,9 +84,15 @@ export function HistoryTable({ history }: { history: HistoryLog[] }) {
                   </TableCell>
                   <TableCell className="text-right">
                     {entry.import_id && (
-                      <Button size="sm" variant="outline" render={<Link href={`/tables/${entry.import_id}`} />}>
-                        View
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="outline" render={<Link href={`/campaigns/${entry.import_id}`} />}>
+                          View
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => void exportImport(entry.import_id)}>
+                          <DownloadIcon className="size-4" />
+                          Export
+                        </Button>
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>
@@ -114,6 +143,11 @@ function formatMetaSummary(action: string, meta: Record<string, unknown>): strin
     }
     const mode = modeLabels[String(meta.mode ?? "")] || String(meta.mode ?? "")
     return `${rows} rows exported${mode ? ` (${mode})` : ""}`
+  }
+  if (action === "rows_saved") {
+    const savedRows = Number(meta.saved_rows ?? 0)
+    const missingRows = Number(meta.missing_rows ?? 0)
+    return `${savedRows.toLocaleString()} rows saved${missingRows ? `, ${missingRows.toLocaleString()} left missing` : ""}`
   }
   const parts: string[] = []
   if (meta.file_name) parts.push(String(meta.file_name))
