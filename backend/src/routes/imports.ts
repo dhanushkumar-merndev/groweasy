@@ -483,7 +483,7 @@ router.get("/:id/stream", async (req, res) => {
           model,
         })}\n\n`)
       },
-      onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage, batchTokenUsage, aiRows, aiUsed }) => {
+      onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage, aiRows, aiUsed }) => {
         if (closed) return
 
         goodCount += batch.summary.good_count
@@ -513,9 +513,6 @@ router.get("/:id/stream", async (req, res) => {
         if (tokenUsage.total_tokens > 0) {
           res.write(`data: ${JSON.stringify({
             type: "token_usage",
-            batch_no: batchNo,
-            total_batches: totalBatches,
-            batch_token_usage: batchTokenUsage,
             token_usage: tokenUsage,
           })}\n\n`)
         }

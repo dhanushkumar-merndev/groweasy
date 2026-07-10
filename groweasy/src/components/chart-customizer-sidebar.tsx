@@ -29,13 +29,17 @@ const chartTypes: Array<{ value: ChartType; label: string }> = [
 
 export function ChartCustomizerSidebar({
   columns,
+  numericColumns,
   value,
   onChange,
 }: {
   columns: string[]
+  numericColumns?: string[]
   value: ChartCustomizerState
   onChange: (value: ChartCustomizerState) => void
 }) {
+  const yAxisColumns = ["count", ...(numericColumns ?? columns)]
+
   return (
     <aside className="grid gap-4 rounded-lg border bg-card p-4 lg:sticky lg:top-20">
       <div className="grid gap-2">
@@ -62,7 +66,7 @@ export function ChartCustomizerSidebar({
         </SelectContent>
       </Select>
       <AxisSelect label="X-axis" columns={columns} value={value.xAxis} onChange={(xAxis) => onChange({ ...value, xAxis })} />
-      <AxisSelect label="Y-axis" columns={["count", ...columns]} value={value.yAxis} onChange={(yAxis) => onChange({ ...value, yAxis })} />
+      <AxisSelect label="Y-axis" columns={yAxisColumns} value={value.yAxis} onChange={(yAxis) => onChange({ ...value, yAxis })} />
       <AxisSelect label="Group by" columns={["none", ...columns]} value={value.groupBy} onChange={(groupBy) => onChange({ ...value, groupBy })} />
     </aside>
   )

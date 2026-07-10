@@ -943,9 +943,6 @@ function parseJsonObjectFromContent(content: string) {
 
 function getGroqApiKeys() {
   return [
-    process.env.GROQ_MODEL_1,
-    process.env.GROQ_MODEL_2,
-    process.env.GROQ_MODEL_3,
     process.env.GROQ_API_KEY,
   ].filter((key, index, keys): key is string => Boolean(key) && keys.indexOf(key) === index)
 }

@@ -13,12 +13,7 @@ router.get("/config", (_req, res) => {
   return jsonOk(res, {
     auth: isAuthConfigured(),
     redis: Boolean(process.env.UPSTASH_REDIS_REST_URL ?? process.env.REDIS_URL),
-    groq: Boolean(
-      process.env.GROQ_MODEL_1 ??
-        process.env.GROQ_MODEL_2 ??
-        process.env.GROQ_MODEL_3 ??
-        process.env.GROQ_API_KEY
-    ),
+    groq: Boolean(process.env.GROQ_API_KEY),
   })
 })
 

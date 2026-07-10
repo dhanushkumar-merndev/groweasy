@@ -110,7 +110,7 @@ export function VirtualTable({
 
   async function saveRow(row: SavedRow) {
     setSavingRows((current) => ({ ...current, [row.id]: true }))
-    const response = await api(`/tables/${importId}/rows/${row.id}`, {
+    const response = await api(`/tables/${row.import_id || importId}/rows/${row.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cleaned_data: row.cleaned_data }),

@@ -33,6 +33,7 @@ export default function RootLayout({
     >
       <body className="min-h-full bg-background text-foreground" suppressHydrationWarning>
         <script
+          id="upload-reload-cleanup"
           dangerouslySetInnerHTML={{
             __html: `
               (() => {

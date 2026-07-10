@@ -1,4 +1,5 @@
 "use client"
+import type { ReactNode } from "react"
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
@@ -14,7 +15,7 @@ import { normalizeLocalValidationRows, saveLocalValidationPreview } from "@/lib/
 
 function StepRow({
   label, detail, state,
-}: { label: string; detail: string; state: "waiting" | "active" | "done" }) {
+}: { label: string; detail: ReactNode; state: "waiting" | "active" | "done" }) {
   return (
     <div className={cn(
       "flex transform-gpu items-center gap-3 rounded-lg border px-4 py-3 transition-all duration-500 ease-out",
@@ -196,7 +197,7 @@ export function ValidateClient({
 
   const setupQuestions = useMemo(() => {
     const questions: {
-      key: string; label: string; detail: string; value: boolean | null;
+      key: string; label: string; detail: ReactNode; value: boolean | null;
       onAnswer: (nextValue: boolean) => void;
     }[] = [
       {
@@ -259,12 +260,12 @@ export function ValidateClient({
       },
     })
 
-	    if (templateName === "Grow Easy CRM") {
+    if (templateName === "Grow Easy CRM") {
       const descriptionQuestionIndex = questions.length
-	      questions.push({
-	        key: "description",
-	        label: "Generate text from row data",
-	        detail: "Yes lets AI write a row-specific text value for the matching description or notes field. Yellow review highlights are shown; with spelling correction this uses more AI tokens.",
+      questions.push({
+        key: "description",
+        label: "Generate text from row data",
+        detail: "AI fills the description/notes field from each row. Uses more AI output tokens and shows yellow review highlights.",
         value: generateDescription,
         onAnswer: (nextValue: boolean) => {
           saveValidateSession(importId, {
@@ -410,7 +411,7 @@ function QuestionOption({
   checked: boolean | null
   onCheckedChange?: (checked: boolean) => void
   label: string
-  detail: string
+  detail: ReactNode
   disabled?: boolean
   active?: boolean
 }) {
@@ -464,7 +465,11 @@ function QuestionOption({
   )
 }
 
-function renderDetailWithTokenWarning(detail: string) {
+function renderDetailWithTokenWarning(detail: ReactNode) {
+  if (typeof detail !== "string") {
+    return detail
+  }
+
   const tokenWarning = detail.match(/more AI(?: output)? tokens/i)?.[0]
 
   if (!tokenWarning) {

@@ -196,10 +196,10 @@ export function AiBatchSettings() {
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-medium">Detailed review visuals</div>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <p className="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
                     {settings.detailedReviewEnabled
-                      ? "AI will return cleaned rows plus field-level change reasons."
-                      : "AI will return only final CRM row data, with no change reasons."}
+                      ? "Uses more AI tokens, but gives better reasoning with field-level change reasons."
+                      : "Uses fewer AI tokens by returning only final CRM row data, without change reasons."}
                   </p>
                 </div>
               </div>

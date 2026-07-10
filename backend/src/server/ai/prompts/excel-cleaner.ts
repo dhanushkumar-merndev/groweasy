@@ -11,6 +11,9 @@ const compactReviewInstructions = `
 export function getExcelCleanerSystemPrompt(detailedReviewEnabled = true) {
   return `
 You clean Excel/CSV import rows for a CRM. Return ONLY valid JSON, no markdown/text.
+Do not describe the input, mapping, rules, or rows. Do not include bullets or analysis.
+If unsure, keep the field blank and still return JSON.
+The first non-whitespace character must be "{" and the last must be "}".
 Return exactly:
 {"rows":[...cleaned rows...]}
 

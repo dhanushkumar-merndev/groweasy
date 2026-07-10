@@ -60,13 +60,6 @@ type StreamEvent =
     }
   | {
       type: "token_usage"
-      batch_no?: number
-      total_batches?: number
-      batch_token_usage?: {
-        prompt_tokens: number
-        completion_tokens: number
-        total_tokens: number
-      }
       token_usage: {
         prompt_tokens: number
         completion_tokens: number
@@ -101,10 +94,6 @@ type TokenUsage = {
   total_tokens: number
 }
 
-type BatchTokenUsage = TokenUsage & {
-  batch_no: number
-}
-
 const MAX_VISIBLE_ACTIVITY = 3
 const ACTIVITY_CARD_HEIGHT = 76
 const ACTIVITY_CARD_GAP = 8
@@ -117,8 +106,6 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
   const startedRef = useRef(false)
   const activityIdRef = useRef(0)
   const aiFallbackUsedRef = useRef(false)
-  const activeBatchRef = useRef<{ batchNo: number; totalBatches: number } | null>(null)
-  const previousTokenUsageRef = useRef<TokenUsage>({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 })
   const [pending, setPending] = useState(false)
   const [percent, setPercent] = useState(0)
   const [status, setStatus] = useState("Preparing AI processing")
@@ -143,7 +130,6 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
     changed: 0,
   })
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null)
-  const [batchTokenUsages, setBatchTokenUsages] = useState<BatchTokenUsage[]>([])
 
   const pushActivity = useCallback((kind: ActivityKind, title: string, detail: string) => {
     activityIdRef.current += 1
@@ -162,10 +148,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
     setProcessedRows(0)
     setTotalRows(0)
     setActiveBatch(null)
-    activeBatchRef.current = null
-    previousTokenUsageRef.current = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
     setTokenUsage(null)
-    setBatchTokenUsages([])
     aiFallbackUsedRef.current = false
     setAiFallbackUsed(false)
     activityIdRef.current = 0
@@ -221,7 +204,6 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
 
         if (data.type === "batch_started") {
           const nextBatch = { batchNo: data.batch_no, totalBatches: data.total_batches }
-          activeBatchRef.current = nextBatch
           setActiveBatch(nextBatch)
           setStatus(`Sending batch ${data.batch_no} / ${data.total_batches}`)
           pushActivity(
@@ -261,20 +243,11 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
 
         if (data.type === "token_usage") {
           if (hasUsableTokenUsage(data.token_usage)) {
-            const batchNo = data.batch_no ?? activeBatchRef.current?.batchNo
-            const batchUsage = getBatchTokenUsage(data.batch_token_usage, data.token_usage, previousTokenUsageRef.current)
-
             setTokenUsage(data.token_usage)
-            previousTokenUsageRef.current = data.token_usage
-            if (batchNo) {
-              setBatchTokenUsages((items) => upsertBatchTokenUsage(items, { batch_no: batchNo, ...batchUsage }))
-            }
             pushActivity(
               "tokens",
-              batchNo ? `Batch ${batchNo} token usage` : "Token usage updated",
-              batchNo
-                ? `${batchUsage.prompt_tokens.toLocaleString()} input, ${batchUsage.completion_tokens.toLocaleString()} output. ${data.token_usage.total_tokens.toLocaleString()} total so far.`
-                : `${data.token_usage.total_tokens.toLocaleString()} total tokens used so far.`,
+              "Token usage updated",
+              `${data.token_usage.total_tokens.toLocaleString()} total tokens used so far.`,
             )
             idbSet(`groweasy-token-usage:${importId}`, data.token_usage)
           }
@@ -409,7 +382,6 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
             items={activity}
             pending={pending}
             tokenUsage={tokenUsage}
-            batchTokenUsages={batchTokenUsages}
             aiFallbackUsed={aiFallbackUsed}
           />
         </div>
@@ -501,13 +473,11 @@ function LiveActivity({
   items,
   pending,
   tokenUsage,
-  batchTokenUsages,
   aiFallbackUsed,
 }: {
   items: ActivityItem[]
   pending: boolean
   tokenUsage: TokenUsage | null
-  batchTokenUsages: BatchTokenUsage[]
   aiFallbackUsed: boolean
 }) {
   const [displayItems, setDisplayItems] = useState<DisplayActivityItem[]>(() =>
@@ -554,9 +524,6 @@ function LiveActivity({
     }
   }, [items])
 
-  const summedBatchUsage = sumBatchTokenUsages(batchTokenUsages)
-  const displayedSum = summedBatchUsage.total_tokens > 0 ? summedBatchUsage : tokenUsage
-
   return (
     <div className="grid h-full content-start gap-3 rounded-lg border bg-background/45 p-3 overflow-auto">
       <div className="flex items-center justify-between gap-3">
@@ -587,32 +554,6 @@ function LiveActivity({
           </div>
         </div>
 
-        {batchTokenUsages.length > 0 && (
-          <div className="mt-3 border-t pt-3">
-            <div className="flex items-center justify-between gap-3 text-[11px] font-medium text-muted-foreground">
-              <span>Per batch</span>
-              <span>Input / Output / Total</span>
-            </div>
-            <div className="mt-2 grid max-h-28 gap-1 overflow-auto pr-1">
-              {batchTokenUsages.map((usage) => (
-                <div key={usage.batch_no} className="flex items-center justify-between gap-3 rounded bg-background/45 px-2 py-1 text-xs">
-                  <span className="font-medium text-foreground">Batch {usage.batch_no}</span>
-                  <span className="tabular-nums text-muted-foreground">
-                    {usage.prompt_tokens.toLocaleString()} / {usage.completion_tokens.toLocaleString()} / {usage.total_tokens.toLocaleString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 flex items-center justify-between gap-3 rounded border bg-primary/5 px-2 py-1.5 text-xs">
-              <span className="font-medium text-foreground">Sum</span>
-              <span className="tabular-nums font-semibold text-foreground">
-                {displayedSum
-                  ? `${displayedSum.prompt_tokens.toLocaleString()} / ${displayedSum.completion_tokens.toLocaleString()} / ${displayedSum.total_tokens.toLocaleString()}`
-                  : "-"}
-              </span>
-            </div>
-          </div>
-        )}
       </div>
 
       <div
@@ -665,39 +606,6 @@ function ActivityIcon({ kind }: { kind: ActivityKind }) {
   if (kind === "connect") return <RadioIcon className={className} />
 
   return <CpuIcon className={className} />
-}
-
-function getBatchTokenUsage(
-  batchUsage: TokenUsage | undefined,
-  cumulativeUsage: TokenUsage,
-  previousUsage: TokenUsage,
-): TokenUsage {
-  if (batchUsage) {
-    return batchUsage
-  }
-
-  return {
-    prompt_tokens: Math.max(0, cumulativeUsage.prompt_tokens - previousUsage.prompt_tokens),
-    completion_tokens: Math.max(0, cumulativeUsage.completion_tokens - previousUsage.completion_tokens),
-    total_tokens: Math.max(0, cumulativeUsage.total_tokens - previousUsage.total_tokens),
-  }
-}
-
-function upsertBatchTokenUsage(items: BatchTokenUsage[], next: BatchTokenUsage) {
-  const byBatch = new Map(items.map((item) => [item.batch_no, item]))
-  byBatch.set(next.batch_no, next)
-  return Array.from(byBatch.values()).sort((a, b) => a.batch_no - b.batch_no)
-}
-
-function sumBatchTokenUsages(items: BatchTokenUsage[]): TokenUsage {
-  return items.reduce<TokenUsage>(
-    (total, item) => ({
-      prompt_tokens: total.prompt_tokens + item.prompt_tokens,
-      completion_tokens: total.completion_tokens + item.completion_tokens,
-      total_tokens: total.total_tokens + item.total_tokens,
-    }),
-    { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-  )
 }
 
 function formatModelName(model: string) {

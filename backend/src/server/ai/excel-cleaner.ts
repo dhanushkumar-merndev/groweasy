@@ -19,10 +19,20 @@ import { getUserAiSettings, getUserDecryptedKey, shouldUseUserApiKey } from "../
 import { summarizeCleanedRows } from "../imports/summary.js"
 import { logger } from "../../lib/logger.js"
 
-const primaryModel = process.env.PRIMARY_AI_MODEL ?? "openai/gpt-oss-120b"
-const fallbackModel = process.env.FALLBACK_AI_MODEL ?? "llama-3.3-70b-versatile"
-const maxRetries = Number(process.env.AI_MAX_RETRIES ?? 2)
-const maxCompletionTokens = Number(process.env.AI_MAX_COMPLETION_TOKENS ?? 2048)
+type AiProvider = "groq" | "commandcode"
+
+const groqDefaultModel = "openai/gpt-oss-120b"
+const commandCodeDefaultModel = "deepseek/deepseek-v4-pro"
+const primaryProvider = normalizeAiProvider(process.env.PRIMARY_AI_PROVIDER)
+const configuredPrimaryModel = process.env.PRIMARY_AI_MODEL?.trim() || ""
+const primaryModel = getPrimaryModelForProvider(primaryProvider, configuredPrimaryModel)
+const fallbackModel = process.env.FALLBACK_AI_MODEL?.trim() || "llama-3.3-70b-versatile"
+const maxRetries = readNumberEnv("AI_MAX_RETRIES", 2, { min: 0, max: 10 })
+const maxCompletionTokens = readNumberEnv("AI_MAX_COMPLETION_TOKENS", 2048, { min: 512, max: 8192 })
+const commandCodeBaseUrl = process.env.COMMAND_CODE_BASE_URL?.trim() || "https://api.commandcode.ai/provider/v1"
+const commandCodeFallbackModel = process.env.COMMAND_CODE_FALLBACK_AI_MODEL?.trim() || ""
+const commandCodeMaxAttempts = readNumberEnv("COMMAND_CODE_AI_MAX_ATTEMPTS", 1, { min: 1, max: 6 })
+const commandCodeRequestTimeoutMs = readNumberEnv("COMMAND_CODE_AI_TIMEOUT_MS", 25_000, { min: 5_000, max: 120_000 })
 const reviewGoodRowsWithAi = process.env.AI_REVIEW_GOOD_ROWS !== "false"
 
 type ProcessingResult = {
@@ -38,7 +48,6 @@ type BatchProgress = {
   totalBatches: number
   processedRows: number
   tokenUsage: ProcessingResult["tokenUsage"]
-  batchTokenUsage: ProcessingResult["tokenUsage"]
   aiRows: number
   aiUsed: boolean
 }
@@ -67,19 +76,16 @@ export async function processImportRows(input: {
   const aiSettings = await getUserAiSettings(input.userId)
   const rowBatches = chunk(input.rows, aiSettings.batchSize)
   const userKey = await shouldUseUserApiKey(input.userId) ? await getUserDecryptedKey(input.userId) : null
-  const allKeys = [
-    userKey?.key,
-    process.env.GROQ_API_KEY,
-    process.env.GROQ_MODEL_1,
-    process.env.GROQ_MODEL_2,
-    process.env.GROQ_MODEL_3,
-  ].map((key) => key?.trim()).filter(Boolean) as string[]
-  const groqClients = allKeys.length > 0 ? allKeys.map((k) => new Groq({ apiKey: k })) : []
+  const activeProvider = normalizeAiProvider(userKey?.provider ?? primaryProvider)
+  const activeModel = getPrimaryModelForProvider(activeProvider, userKey?.model || primaryModel)
+  const aiApiKeys = getAiApiKeys(activeProvider, userKey?.key)
+  const aiModels = getAiModels(activeProvider, activeModel)
+  const groqClients = activeProvider === "groq" && aiApiKeys.length > 0 ? aiApiKeys.map((k) => new Groq({ apiKey: k })) : []
   const allRows: CleanedRow[] = []
-  let modelUsed = groqClients.length > 0 ? (userKey?.model || primaryModel) : "demo-local-cleaner"
+  let modelUsed = aiApiKeys.length > 0 ? `${activeProvider}/${activeModel}` : "demo-local-cleaner"
   const tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
 
-  logger.info({ importId: input.importId, totalRows: input.rows.length, aiSettings, totalBatches: rowBatches.length }, "Starting AI processing")
+  logger.info({ importId: input.importId, totalRows: input.rows.length, aiSettings, totalBatches: rowBatches.length, provider: activeProvider, model: activeModel }, "Starting AI processing")
 
   await store.addHistory(input.userId, input.importId, "ai_processing_started", {
     total_rows: input.rows.length,
@@ -113,19 +119,38 @@ export async function processImportRows(input: {
       model: rowsNeedingAi.length > 0 ? modelUsed : "deterministic-skip-ai",
     })
 
-    const aiResult = groqClients.length > 0 && rowsNeedingAi.length > 0
-        ? await cleanWithGroq({
-          groqClients,
-          rows: rowsNeedingAi,
-          template: input.template,
-          batchNo,
-          aiRequestBatchSize: aiSettings.requestBatchSize,
-          requireBothEmailPhone: input.requireBothEmailPhone,
-          generateDescription: input.generateDescription,
-          correctSpelling: input.correctSpelling,
-          detailedReviewEnabled: aiSettings.detailedReviewEnabled || input.correctSpelling === true || input.generateDescription === true,
-        }).catch(async (err) => {
-          logger.warn({ batchNo, err }, "All Groq keys exhausted, falling back to deterministic cleaning")
+    const detailedReviewEnabled = aiSettings.detailedReviewEnabled || input.correctSpelling === true || input.generateDescription === true
+    const aiResult = aiApiKeys.length > 0 && rowsNeedingAi.length > 0
+        ? await (activeProvider === "commandcode"
+          ? cleanWithOpenAiCompatible({
+              apiKeys: aiApiKeys,
+              baseUrl: commandCodeBaseUrl,
+              providerLabel: "Command Code",
+              models: aiModels,
+              maxAttempts: commandCodeMaxAttempts,
+              requestTimeoutMs: commandCodeRequestTimeoutMs,
+              rows: rowsNeedingAi,
+              template: input.template,
+              batchNo,
+              aiRequestBatchSize: aiSettings.requestBatchSize,
+              requireBothEmailPhone: input.requireBothEmailPhone,
+              generateDescription: input.generateDescription,
+              correctSpelling: input.correctSpelling,
+              detailedReviewEnabled,
+            })
+          : cleanWithGroq({
+              groqClients,
+              models: aiModels,
+              rows: rowsNeedingAi,
+              template: input.template,
+              batchNo,
+              aiRequestBatchSize: aiSettings.requestBatchSize,
+              requireBothEmailPhone: input.requireBothEmailPhone,
+              generateDescription: input.generateDescription,
+              correctSpelling: input.correctSpelling,
+              detailedReviewEnabled,
+            })).catch(async (err) => {
+          logger.warn({ batchNo, provider: activeProvider, err }, "All AI provider keys exhausted, falling back to deterministic cleaning")
           return {
             rows: cleanRowsWithTemplate(rowsNeedingAi, input.template, {
               requireBothEmailPhone: input.requireBothEmailPhone,
@@ -137,15 +162,11 @@ export async function processImportRows(input: {
         })
       : null
     const aiRows = aiResult?.rows ?? []
-    const batchTokenUsage = aiResult?.usage
-      ? { ...aiResult.usage }
-      : { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-
-    if (batchTokenUsage.total_tokens > 0) {
-      tokenUsage.prompt_tokens += batchTokenUsage.prompt_tokens
-      tokenUsage.completion_tokens += batchTokenUsage.completion_tokens
-      tokenUsage.total_tokens += batchTokenUsage.total_tokens
-      logger.info({ batchNo, usage: batchTokenUsage, accumulated: { ...tokenUsage } }, "Token usage accumulated")
+    if (aiResult?.usage && aiResult.usage.total_tokens > 0) {
+      tokenUsage.prompt_tokens += aiResult.usage.prompt_tokens
+      tokenUsage.completion_tokens += aiResult.usage.completion_tokens
+      tokenUsage.total_tokens += aiResult.usage.total_tokens
+      logger.info({ batchNo, usage: aiResult.usage, accumulated: { ...tokenUsage } }, "Token usage accumulated")
     }
     const aiRowsById = new Map(aiRows.map((row) => [row.id, row]))
     const cleanedRows = localRows
@@ -174,7 +195,6 @@ export async function processImportRows(input: {
       totalBatches: rowBatches.length,
       processedRows: allRows.length,
       tokenUsage: { ...tokenUsage },
-      batchTokenUsage,
       aiRows: rowsNeedingAi.length,
       aiUsed: aiResult?.aiUsed ?? false,
     })
@@ -293,6 +313,7 @@ export async function getProcessedRows(importId: string, updatedAt?: string) {
 
 async function cleanWithGroq(input: {
   groqClients: Groq[]
+  models: string[]
   rows: RawImportRow[]
   template: Template
   batchNo: number
@@ -385,7 +406,7 @@ async function cleanWithGroq(input: {
   }, "AI request headers and row sample")
 
   const keyCount = input.groqClients.length
-  const models = unique([primaryModel, fallbackModel].filter(Boolean))
+  const models = input.models
   const maxAttempts = Math.max(maxRetries + 1, keyCount * models.length)
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -470,6 +491,320 @@ async function cleanWithGroq(input: {
 
   logger.warn({ batchNo: input.batchNo }, "All Groq keys exhausted, using local fallback")
   return { rows: localRows, usage: null, aiUsed: false }
+}
+
+async function cleanWithOpenAiCompatible(input: {
+  apiKeys: string[]
+  baseUrl: string
+  providerLabel: string
+  models: string[]
+  maxAttempts: number
+  requestTimeoutMs: number
+  rows: RawImportRow[]
+  template: Template
+  batchNo: number
+  aiRequestBatchSize: number
+  requireBothEmailPhone?: boolean
+  generateDescription?: boolean
+  correctSpelling?: boolean
+  detailedReviewEnabled?: boolean
+}): Promise<{ rows: CleanedRow[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null; aiUsed: boolean }> {
+  if (input.rows.length > input.aiRequestBatchSize) {
+    const allRows: CleanedRow[] = []
+    const totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    let aiUsed = false
+
+    for (const [index, rows] of chunk(input.rows, input.aiRequestBatchSize).entries()) {
+      const result = await cleanWithOpenAiCompatible({
+        ...input,
+        rows,
+        batchNo: Number(`${input.batchNo}.${index + 1}`),
+      })
+
+      allRows.push(...result.rows)
+      aiUsed ||= result.aiUsed
+
+      if (result.usage) {
+        totalUsage.prompt_tokens += result.usage.prompt_tokens
+        totalUsage.completion_tokens += result.usage.completion_tokens
+        totalUsage.total_tokens += result.usage.total_tokens
+      }
+    }
+
+    return {
+      rows: allRows,
+      usage: totalUsage.total_tokens > 0 ? totalUsage : null,
+      aiUsed,
+    }
+  }
+
+  const localRows = cleanRowsWithTemplate(input.rows, input.template, {
+    requireBothEmailPhone: input.requireBothEmailPhone,
+    correctSpelling: input.correctSpelling,
+  })
+  const request = buildAiRequestPayload({ ...input, strictJsonOnly: true })
+  const keyCount = input.apiKeys.length
+  const maxAttempts = Math.min(input.maxAttempts, Math.max(1, keyCount * input.models.length))
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const keyIndex = attempt % keyCount
+    const modelIndex = Math.floor(attempt / keyCount) % input.models.length
+    const apiKey = input.apiKeys[keyIndex]
+    const model = input.models[modelIndex]
+    const estimatedPromptTokens = estimateTokenCount(`${request.systemPrompt}\n${request.userPayload}`)
+
+    logger.info({
+      batchNo: input.batchNo,
+      attempt,
+      keyIndex,
+      model,
+      provider: input.providerLabel,
+      promptVersion: EXCEL_CLEANER_PROMPT_VERSION,
+      estimatedPromptTokens,
+      estimatedRows: input.rows.length,
+      payloadPreview: truncate(request.userPayload, 6000),
+    }, `Calling ${input.providerLabel} API`)
+
+    try {
+      const response = await requestOpenAiCompatibleChat({
+        apiKey,
+        baseUrl: input.baseUrl,
+        model,
+        systemPrompt: request.systemPrompt,
+        userPayload: request.userPayload,
+        timeoutMs: input.requestTimeoutMs,
+      })
+      const content = response.choices?.[0]?.message?.content?.trim() ?? ""
+      const finishReason = response.choices?.[0]?.finish_reason
+      const usage = normalizeGroqUsage(response.usage, request.systemPrompt, request.userPayload, content)
+
+      logger.info({
+        batchNo: input.batchNo,
+        attempt,
+        keyIndex,
+        model,
+        provider: input.providerLabel,
+        responsePreview: truncate(content, 6000),
+        finishReason,
+        usage,
+      }, `${input.providerLabel} API response preview`)
+
+      if (finishReason === "length") {
+        logger.warn({ batchNo: input.batchNo, attempt, keyIndex, model, usage }, `${input.providerLabel} response hit token limit before valid JSON, retrying`)
+        continue
+      }
+
+      if (!content) {
+        logger.warn({ batchNo: input.batchNo, attempt, keyIndex, model }, `${input.providerLabel} returned empty content, retrying`)
+        continue
+      }
+
+      const parsed = parseGroqRows(content, localRows, input.template, {
+        requireBothEmailPhone: input.requireBothEmailPhone,
+        generateDescription: input.generateDescription,
+        detailedReviewEnabled: request.detailedReviewEnabled,
+      })
+
+      if (parsed) {
+        logger.info({ batchNo: input.batchNo, attempt, keyIndex, model, parsedRows: parsed.length }, `${input.providerLabel} response parsed successfully`)
+        return { rows: parsed, usage, aiUsed: true }
+      }
+      logger.warn({ batchNo: input.batchNo, attempt, keyIndex, model, contentPreview: content.slice(0, 300) }, `${input.providerLabel} returned unparseable JSON`)
+    } catch (err) {
+      logger.warn({ batchNo: input.batchNo, attempt, keyIndex, model, err: err instanceof Error ? { message: err.message, status: (err as any).status } : err }, `${input.providerLabel} API call failed, retrying`)
+    }
+  }
+
+  logger.warn({ batchNo: input.batchNo, provider: input.providerLabel }, `All ${input.providerLabel} keys exhausted, using local fallback`)
+  return { rows: localRows, usage: null, aiUsed: false }
+}
+
+function buildAiRequestPayload(input: {
+  rows: RawImportRow[]
+  template: Template
+  batchNo: number
+  requireBothEmailPhone?: boolean
+  generateDescription?: boolean
+  correctSpelling?: boolean
+  detailedReviewEnabled?: boolean
+  strictJsonOnly?: boolean
+}) {
+  const templateHeaders = input.template.columns_config.map((column) => ({
+    key: column.key,
+    label: column.label,
+    required: column.required,
+    format_rules: column.format_rules,
+  }))
+  const sourceHeaders = unique(
+    input.rows.flatMap((row) => Object.keys(row.raw_data ?? {}))
+  )
+  const sourceHeaderContext = buildSourceHeaderContext(input.rows, sourceHeaders)
+  const descriptionKey = getDescriptionColumnKey(input.template)
+  const detailedReviewEnabled = input.detailedReviewEnabled ?? true
+  const systemPrompt = input.strictJsonOnly
+    ? getStrictJsonCleanerSystemPrompt(detailedReviewEnabled)
+    : getExcelCleanerSystemPrompt(detailedReviewEnabled)
+  const payload = {
+    batch_no: input.batchNo,
+    template: templateHeaders,
+    source_headers: sourceHeaderContext,
+    rules: {
+      require_both_email_phone: input.requireBothEmailPhone ?? false,
+      correct_spelling: input.correctSpelling ?? false,
+      contact_requirement: input.requireBothEmailPhone
+        ? "email and phone/mobile are both required"
+        : "either email or phone/mobile is enough; only mark contact missing when both are absent",
+      description_key: descriptionKey ?? null,
+    },
+    review_mode: detailedReviewEnabled ? "detailed_ai_changes" : "compact_crm_rows_only",
+    rows: input.rows.map((row) => ({
+      id: row.id,
+      sheet_name: row.sheet_name,
+      row_index: row.row_index,
+      raw_data: row.raw_data,
+    })),
+    output_shape: "AiBatchResult.rows only",
+    generate_description: input.generateDescription ?? false,
+  }
+  const userPayload = input.strictJsonOnly
+    ? `Return only this JSON shape: {"rows":[...]}. Do not explain, list steps, or describe the input.\nInput:\n${JSON.stringify(payload)}`
+    : JSON.stringify(payload)
+
+  return {
+    templateHeaders,
+    sourceHeaderContext,
+    detailedReviewEnabled,
+    systemPrompt,
+    userPayload,
+  }
+}
+
+function getStrictJsonCleanerSystemPrompt(detailedReviewEnabled = true) {
+  return `
+You are a CRM import cleaning JSON API.
+Return only one valid JSON object. No markdown, no bullets, no commentary, no analysis.
+The first character must be "{" and the last character must be "}".
+Required response shape:
+{"rows":[{"id":"same id","cleaned_data":{},"status":"good|missing|skipped","missing_fields":[],"ai_changes":[]}]}
+
+Rules:
+- Output exactly one row for each input row id.
+- cleaned_data must contain only the template keys.
+- Map source headers by meaning and sample values, including typo headers.
+- Extract valid email, country_code, and Indian mobile from mixed contact cells.
+- Indian mobile output must be exactly the last 10 digits and start with 6/7/8/9.
+- Never invent name, email, phone, city, state, country, or any contact value.
+- Split clear city/state/country locations into matching template fields.
+- Apply template format_rules: lowercase, uppercase, title_case, date_dd_mm_yyyy, digits_only, last_10_digits, dash_to_blank.
+- date_dd_mm_yyyy outputs date only as DD/MM/YYYY; remove time.
+- Placeholder values like "-", "--", "---", "#", "##", "###", "N/A", "NA", "test", "sample", and symbol-only cells become "".
+- Correct obvious spelling only when rules.correct_spelling=true; never change email or phone spelling.
+- If generate_description=true and rules.description_key exists, fill that field with a natural CRM note under 100 chars using only row data.
+- Follow rules.contact_requirement exactly for status and missing_fields.
+- If rules.require_both_email_phone=true, both email and mobile are required when those template fields exist.
+- If rules.require_both_email_phone=false, either valid email or valid mobile is enough; only both missing makes contact missing.
+- Missing name alone must not make a row missing when valid email or valid mobile exists.
+- skipped means no usable identity/contact value exists.
+${detailedReviewEnabled
+  ? "- ai_changes must be an array only. Include real semantic, spelling, extraction, and generated-description changes; skip no-op/template-only formatting."
+  : "- Set ai_changes to [] for every row. Do not explain changed fields. Save output tokens for CRM cleaned_data only."}
+`.trim()
+}
+
+type OpenAiCompatibleChatResponse = {
+  choices?: Array<{
+    finish_reason?: string
+    message?: {
+      content?: string
+    }
+  }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  }
+  error?: {
+    message?: string
+  }
+}
+
+async function requestOpenAiCompatibleChat(input: {
+  apiKey: string
+  baseUrl: string
+  model: string
+  systemPrompt: string
+  userPayload: string
+  timeoutMs: number
+}) {
+  const url = new URL(`${input.baseUrl.replace(/\/+$/, "")}/chat/completions`)
+  const body = {
+    model: input.model,
+    temperature: 0,
+    max_tokens: maxCompletionTokens,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: input.systemPrompt },
+      { role: "user", content: input.userPayload },
+    ],
+  }
+
+  let result = await postOpenAiCompatibleChat(url, input.apiKey, body, input.timeoutMs)
+
+  if (result.response.status === 400 && shouldRetryWithoutResponseFormat(result.json)) {
+    const fallbackBody = {
+      ...body,
+      response_format: undefined,
+    }
+    result = await postOpenAiCompatibleChat(url, input.apiKey, fallbackBody, input.timeoutMs)
+  }
+
+  if (!result.response.ok) {
+    const error = new Error(result.json.error?.message ?? `OpenAI-compatible API failed with HTTP ${result.response.status}`)
+    ;(error as Error & { status?: number }).status = result.response.status
+    throw error
+  }
+
+  return result.json
+}
+
+async function postOpenAiCompatibleChat(url: URL, apiKey: string, body: unknown, timeoutMs: number) {
+  const response = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  }, timeoutMs)
+
+  const json = await response.json().catch(() => ({})) as OpenAiCompatibleChatResponse
+
+  return { response, json }
+}
+
+async function fetchWithTimeout(url: URL, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`AI provider API timed out after ${Math.round(timeoutMs / 1000)}s`)
+    }
+
+    throw err
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function shouldRetryWithoutResponseFormat(response: OpenAiCompatibleChatResponse) {
+  const message = response.error?.message?.toLowerCase() ?? ""
+
+  return message.includes("response_format") ||
+    message.includes("json mode") ||
+    message.includes("response schema")
 }
 
 function normalizeGroqUsage(
@@ -766,6 +1101,83 @@ function appendGeneratedDescriptionChange(
 
 function isDeterministicFormattingChange(reason: string) {
   return reason.toLowerCase().includes("deterministic template formatting")
+}
+
+function normalizeAiProvider(provider: string | null | undefined): AiProvider {
+  const normalized = provider?.toLowerCase().replace(/[\s_-]/g, "")
+  return normalized === "commandcode" ? "commandcode" : "groq"
+}
+
+function getPrimaryModelForProvider(provider: AiProvider, model: string | null | undefined) {
+  const selectedModel = model?.trim()
+
+  if (!selectedModel) {
+    return provider === "commandcode" ? commandCodeDefaultModel : groqDefaultModel
+  }
+
+  if (provider === "groq" && isCommandCodeModel(selectedModel)) {
+    return groqDefaultModel
+  }
+
+  if (provider === "commandcode" && isGroqModel(selectedModel)) {
+    return commandCodeDefaultModel
+  }
+
+  return selectedModel
+}
+
+function isCommandCodeModel(model: string) {
+  return new Set([
+    "deepseek/deepseek-v4-pro",
+    "minimaxai/minimax-m3",
+  ]).has(model.toLowerCase())
+}
+
+function isGroqModel(model: string) {
+  const normalized = model.toLowerCase()
+
+  return [
+    "openai/",
+    "meta-llama/",
+    "llama-",
+    "gemma",
+    "moonshotai/",
+    "qwen/",
+  ].some((prefix) => normalized.startsWith(prefix))
+}
+
+function getAiApiKeys(provider: AiProvider, userKey?: string) {
+  const providerKeys = provider === "commandcode"
+    ? [
+        process.env.COMMAND_CODE_API_KEY,
+        process.env.COMMANDCODE_API_KEY,
+      ]
+    : [
+        process.env.GROQ_API_KEY,
+      ]
+
+  return unique([userKey, ...providerKeys]
+    .map((key) => key?.trim())
+    .filter(Boolean) as string[])
+}
+
+function getAiModels(provider: AiProvider, model: string) {
+  if (provider === "commandcode") {
+    return unique([model, commandCodeFallbackModel].filter(Boolean))
+  }
+
+  return unique([model, fallbackModel].filter(Boolean))
+}
+
+function readNumberEnv(name: string, defaultValue: number, bounds: { min: number; max: number }) {
+  const raw = process.env[name]
+  const parsed = raw === undefined || raw.trim() === "" ? defaultValue : Number(raw)
+
+  if (!Number.isFinite(parsed)) {
+    return defaultValue
+  }
+
+  return Math.min(bounds.max, Math.max(bounds.min, parsed))
 }
 
 function chunk<T>(items: T[], size: number) {

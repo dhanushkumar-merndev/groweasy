@@ -22,14 +22,12 @@ export function ReviewWorkspace({
   template: Template
   requireBothEmailPhone?: boolean
 }) {
-  const [editableRows, setEditableRows] = useState(() =>
-    normalizeReviewRows(readReviewDraft(importId) ?? rows, template, { requireBothEmailPhone })
+  const [draftRows, setDraftRows] = useState(() => readReviewDraft(importId) ?? rows)
+  const editableRows = useMemo(
+    () => normalizeReviewRows(draftRows, template, { requireBothEmailPhone }),
+    [draftRows, requireBothEmailPhone, template],
   )
   const summary = useMemo(() => summarizeReviewRows(editableRows), [editableRows])
-
-  useEffect(() => {
-    setEditableRows((currentRows) => normalizeReviewRows(currentRows, template, { requireBothEmailPhone }))
-  }, [requireBothEmailPhone, template])
 
   useEffect(() => {
     try {
@@ -46,7 +44,7 @@ export function ReviewWorkspace({
         rows={editableRows}
         template={template}
         requireBothEmailPhone={requireBothEmailPhone}
-        onRowsChange={setEditableRows}
+        onRowsChange={setDraftRows}
       />
     </div>
   )

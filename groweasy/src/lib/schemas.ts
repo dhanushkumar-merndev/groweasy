@@ -116,6 +116,7 @@ export const analyticsSuggestSchema = z.object({
   import_id: z.string().min(1),
   sheet: z.string().optional(),
   columns: z.array(z.string()).default([]),
+  sample_rows: z.array(rowDataSchema).default([]),
   filters: z.record(z.string(), z.string()).default({}),
 })
 

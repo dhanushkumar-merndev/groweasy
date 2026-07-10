@@ -10,15 +10,18 @@ import { getSupabaseServiceClient } from "../server/db/supabase.js"
 
 const router = Router()
 
-const DEFAULT_AI_BATCH_SIZE = clampNumber(Number(process.env.AI_BATCH_SIZE ?? 15), 5, 100, 15)
-const DEFAULT_AI_REQUEST_BATCH_SIZE = clampNumber(Number(process.env.AI_REQUEST_BATCH_SIZE ?? 15), 1, 30, 15)
+const AI_BATCH_LIMITS_BASE = {
+  batchSize: { min: 5, max: 100 },
+  requestBatchSize: { min: 1, max: 30 },
+}
+const FALLBACK_AI_BATCH_DEFAULTS = readProviderBatchDefaults("AI", 15, 15)
 const AI_BATCH_LIMITS = {
-  batchSize: { min: 5, max: 100, default: DEFAULT_AI_BATCH_SIZE },
-  requestBatchSize: { min: 1, max: 30, default: DEFAULT_AI_REQUEST_BATCH_SIZE },
+  batchSize: { ...AI_BATCH_LIMITS_BASE.batchSize, default: FALLBACK_AI_BATCH_DEFAULTS.batchSize },
+  requestBatchSize: { ...AI_BATCH_LIMITS_BASE.requestBatchSize, default: FALLBACK_AI_BATCH_DEFAULTS.requestBatchSize },
 }
 
 const saveSchema = z.object({
-  provider: z.enum(["groq", "openai", "anthropic", "google", "together"]),
+  provider: z.enum(["groq", "commandcode"]),
   model: z.string().min(1),
   key: z.string(),
 })
@@ -109,7 +112,7 @@ router.get("/apikey", async (req, res) => {
     return jsonOk(res, {
       hasKey: true,
       maskedKey: "********",
-      provider: settings?.provider ?? legacyInfo?.provider ?? "groq",
+      provider: normalizeSupportedProvider(settings?.provider ?? legacyInfo?.provider ?? "groq"),
       model: settings?.model ?? legacyInfo?.model ?? "openai/gpt-oss-120b",
       useUserApiKey,
     })
@@ -123,10 +126,11 @@ router.get("/ai", async (req, res) => {
     const user = await requireCurrentUser(req)
     const activeProfile = await getActiveAiProfile(user.id)
     const recommendation = getAiTuningRecommendation(activeProfile.model)
+    const defaultSettings = getDefaultAiSettingsForProvider(activeProfile.provider)
 
     return jsonOk(res, {
       settings: await getUserAiSettings(user.id),
-      limits: AI_BATCH_LIMITS,
+      limits: getAiBatchLimits(defaultSettings),
       activeProfile,
       recommendation,
       groqReference: {
@@ -206,7 +210,7 @@ async function getActiveAiProfile(userId: string) {
       }
     : {
         source: "default" as const,
-        provider: "groq",
+        provider: normalizeSupportedProvider(process.env.PRIMARY_AI_PROVIDER ?? "groq"),
         model: process.env.PRIMARY_AI_MODEL ?? "openai/gpt-oss-120b",
       }
 }
@@ -216,6 +220,9 @@ function getAiTuningRecommendation(model: string) {
 
   if (
     normalized.includes("gpt-oss-120b") ||
+    normalized.includes("deepseek-v4-pro") ||
+    normalized.includes("kimi") ||
+    normalized.includes("glm-5") ||
     normalized.includes("70b") ||
     normalized.includes("llama-4-scout") ||
     normalized.includes("17b")
@@ -223,8 +230,8 @@ function getAiTuningRecommendation(model: string) {
     return {
       batchSize: 8,
       requestBatchSize: 8,
-      label: "Free-tier safe",
-      note: "Best first choice for large Groq models under strict TPM limits.",
+      label: "Quality safe",
+      note: "Good first choice for larger models and stricter JSON reliability.",
     }
   }
 
@@ -245,15 +252,23 @@ function getAiTuningRecommendation(model: string) {
   }
 }
 
+function normalizeSupportedProvider(provider: string) {
+  return provider.toLowerCase().replace(/[\s_-]/g, "") === "commandcode" ? "commandcode" : "groq"
+}
+
 export async function getUserAiSettings(userId: string): Promise<{ batchSize: number; requestBatchSize: number; detailedReviewEnabled: boolean }> {
   const dbSettings = await getDbUserAiSettings(userId)
+  const activeProvider = normalizeSupportedProvider(
+    (dbSettings?.use_user_api_key && dbSettings.provider) || process.env.PRIMARY_AI_PROVIDER || "groq"
+  )
+  const defaultSettings = getDefaultAiSettingsForProvider(activeProvider)
   const normalized = normalizeAiSettings(dbSettings?.batch_size && dbSettings?.request_batch_size ? {
     batchSize: dbSettings.batch_size,
     requestBatchSize: dbSettings.request_batch_size,
   } : store.getAiSettings(userId) ?? {
-    batchSize: DEFAULT_AI_BATCH_SIZE,
-    requestBatchSize: DEFAULT_AI_REQUEST_BATCH_SIZE,
-  })
+    batchSize: defaultSettings.batchSize,
+    requestBatchSize: defaultSettings.requestBatchSize,
+  }, defaultSettings)
 
   return {
     ...normalized,
@@ -308,9 +323,48 @@ async function upsertUserAiSettings(userId: string, patch: Partial<Omit<DbUserAi
   }
 }
 
-function normalizeAiSettings(settings: { batchSize: number; requestBatchSize: number }) {
-  const batchSize = clampNumber(settings.batchSize, AI_BATCH_LIMITS.batchSize.min, AI_BATCH_LIMITS.batchSize.max, DEFAULT_AI_BATCH_SIZE)
-  const requestBatchSize = clampNumber(settings.requestBatchSize, AI_BATCH_LIMITS.requestBatchSize.min, AI_BATCH_LIMITS.requestBatchSize.max, DEFAULT_AI_REQUEST_BATCH_SIZE)
+function getDefaultAiSettingsForProvider(provider: string) {
+  const normalizedProvider = normalizeSupportedProvider(provider)
+  const prefix = normalizedProvider === "commandcode" ? "COMMAND_CODE" : "GROQ"
+  const fallbackBatchSize = normalizedProvider === "commandcode" ? FALLBACK_AI_BATCH_DEFAULTS.batchSize : 8
+  const fallbackRequestBatchSize = normalizedProvider === "commandcode" ? FALLBACK_AI_BATCH_DEFAULTS.requestBatchSize : 8
+
+  return readProviderBatchDefaults(prefix, fallbackBatchSize, fallbackRequestBatchSize)
+}
+
+function readProviderBatchDefaults(prefix: string, fallbackBatchSize: number, fallbackRequestBatchSize: number) {
+  const batchSize = clampNumber(
+    Number(process.env[`${prefix}_AI_BATCH_SIZE`] ?? (prefix === "AI" ? undefined : process.env.AI_BATCH_SIZE) ?? fallbackBatchSize),
+    AI_BATCH_LIMITS_BASE.batchSize.min,
+    AI_BATCH_LIMITS_BASE.batchSize.max,
+    fallbackBatchSize
+  )
+  const requestBatchSize = clampNumber(
+    Number(process.env[`${prefix}_AI_REQUEST_BATCH_SIZE`] ?? (prefix === "AI" ? undefined : process.env.AI_REQUEST_BATCH_SIZE) ?? fallbackRequestBatchSize),
+    AI_BATCH_LIMITS_BASE.requestBatchSize.min,
+    AI_BATCH_LIMITS_BASE.requestBatchSize.max,
+    fallbackRequestBatchSize
+  )
+
+  return {
+    batchSize,
+    requestBatchSize: Math.min(requestBatchSize, batchSize),
+  }
+}
+
+function getAiBatchLimits(defaults: { batchSize: number; requestBatchSize: number }) {
+  return {
+    batchSize: { ...AI_BATCH_LIMITS_BASE.batchSize, default: defaults.batchSize },
+    requestBatchSize: { ...AI_BATCH_LIMITS_BASE.requestBatchSize, default: defaults.requestBatchSize },
+  }
+}
+
+function normalizeAiSettings(
+  settings: { batchSize: number; requestBatchSize: number },
+  defaults = FALLBACK_AI_BATCH_DEFAULTS
+) {
+  const batchSize = clampNumber(settings.batchSize, AI_BATCH_LIMITS.batchSize.min, AI_BATCH_LIMITS.batchSize.max, defaults.batchSize)
+  const requestBatchSize = clampNumber(settings.requestBatchSize, AI_BATCH_LIMITS.requestBatchSize.min, AI_BATCH_LIMITS.requestBatchSize.max, defaults.requestBatchSize)
 
   return {
     batchSize,

@@ -12,55 +12,37 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api } from "@/lib/api-client"
 
 const PROVIDER_MODELS: Record<string, { label: string; models: { value: string; label: string }[] }> = {
+  commandcode: {
+    label: "Command Code",
+    models: [
+      { value: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+      { value: "MiniMaxAI/MiniMax-M3", label: "MiniMax M3" },
+    ],
+  },
   groq: {
     label: "Groq",
     models: [
-      { value: "meta-llama/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout 17B" },
       { value: "openai/gpt-oss-120b", label: "GPT OSS 120B" },
-      { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B" },
-      { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B (fast)" },
-      { value: "mixtral-8x7b-32768", label: "Mixtral 8x7B" },
-      { value: "gemma2-9b-it", label: "Gemma 2 9B" },
-      { value: "deepseek-r1-distill-llama-70b", label: "DeepSeek R1 70B" },
-    ],
-  },
-  openai: {
-    label: "OpenAI",
-    models: [
-      { value: "gpt-4o", label: "GPT-4o" },
-      { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-      { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
-      { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" },
-    ],
-  },
-  anthropic: {
-    label: "Anthropic",
-    models: [
-      { value: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
-      { value: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku" },
-      { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
-    ],
-  },
-  google: {
-    label: "Google",
-    models: [
-      { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
-      { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-    ],
-  },
-  together: {
-    label: "Together AI",
-    models: [
-      { value: "meta-llama/Llama-3.3-70B-Instruct-Turbo", label: "Llama 3.3 70B" },
-      { value: "mistralai/Mixtral-8x22B-Instruct-v0.1", label: "Mixtral 8x22B" },
-      { value: "deepseek-ai/deepseek-llm-67b-chat", label: "DeepSeek 67B" },
+      { value: "meta-llama/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout 17B" },
+      { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant" },
     ],
   },
 }
 
+function normalizeProvider(provider: unknown) {
+  return String(provider ?? "").toLowerCase().replace(/[\s_-]/g, "") === "commandcode" ? "commandcode" : "groq"
+}
+
+function getSupportedModel(provider: string, model: unknown) {
+  const models = PROVIDER_MODELS[provider]?.models ?? PROVIDER_MODELS.commandcode.models
+  const value = String(model ?? "")
+
+  return models.some((item) => item.value === value) ? value : models[0]?.value ?? ""
+}
+
 export function ApiKeyManager() {
-  const [provider, setProvider] = useState("groq")
-  const [model, setModel] = useState("openai/gpt-oss-120b")
+  const [provider, setProvider] = useState("commandcode")
+  const [model, setModel] = useState("deepseek/deepseek-v4-pro")
   const [key, setKey] = useState("")
   const [savedInfo, setSavedInfo] = useState<{ provider: string; model: string } | null>(null)
   const [useUserApiKey, setUseUserApiKey] = useState(false)
@@ -73,8 +55,8 @@ export function ApiKeyManager() {
       .then((data) => {
         setUseUserApiKey(Boolean(data.data?.useUserApiKey))
         if (data.data?.hasKey) {
-          const p = data.data.provider ?? "groq"
-          const m = data.data.model ?? "openai/gpt-oss-120b"
+          const p = normalizeProvider(data.data.provider)
+          const m = getSupportedModel(p, data.data.model)
           setSavedInfo({ provider: p, model: m })
           setProvider(p)
           setModel(m)
@@ -215,7 +197,7 @@ export function ApiKeyManager() {
                   type="password"
                   value={key}
                   onChange={(e) => setKey(e.target.value)}
-                  placeholder={hasExisting ? "New key (leave blank to keep current)" : "gsk_..."}
+                  placeholder={hasExisting ? "New key (leave blank to keep current)" : provider === "commandcode" ? "Command Code provider key" : "gsk_..."}
                 />
               </div>
               </div>
