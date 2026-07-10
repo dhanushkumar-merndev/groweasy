@@ -58,22 +58,29 @@ function buildData(imports: ImportJob[], templates: Template[], series: ChartSer
 
   return Array.from(dateMap.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, counts]) => ({ date, ...counts }))
+    .map(([date, counts]) => {
+      const row: Record<string, string | number> = { date }
+      for (const item of series) {
+        row[item.key] = counts[item.key] ?? 0
+      }
+      return row
+    })
 }
 
 function buildConfig(series: ChartSeries[]): ChartConfig {
-  const greenSeries = [
+  const seriesColors = [
     "var(--primary)",
-    "hsl(151 55% 58%)",
-    "hsl(166 64% 46%)",
-    "hsl(142 58% 44%)",
-    "hsl(178 56% 42%)",
+    "hsl(199 89% 55%)",
+    "hsl(38 92% 55%)",
+    "hsl(262 83% 66%)",
+    "hsl(346 77% 58%)",
+    "hsl(173 70% 44%)",
   ]
   const config: ChartConfig = {}
   for (let i = 0; i < series.length; i++) {
     config[series[i].key] = {
       label: series[i].label,
-      color: greenSeries[i % greenSeries.length],
+      color: seriesColors[i % seriesColors.length],
     }
   }
   return config
@@ -98,6 +105,11 @@ export function ChartLineInteractive({ imports, templates }: Props) {
     return t
   }, [chartData, series])
 
+  const totalLeads = React.useMemo(
+    () => series.reduce((total, item) => total + (totals[item.key] ?? 0), 0),
+    [series, totals],
+  )
+
   const yMax = React.useMemo(() => {
     let max = 0
     for (const row of chartData) {
@@ -114,24 +126,31 @@ export function ChartLineInteractive({ imports, templates }: Props) {
         <div className="flex flex-1 flex-col justify-center gap-1 px-6 py-3">
           <CardTitle>Leads Extracted</CardTitle>
           <CardDescription>
-            Good rows saved per template over time
+            Good rows saved over time
           </CardDescription>
         </div>
-        <div className="flex flex-wrap">
-          {series.map((item) => (
-            <div
-              key={item.key}
-              className="flex flex-1 flex-col justify-center gap-1 border-t px-4 py-3 text-left sm:border-t-0 sm:border-l sm:px-6 sm:py-4"
-            >
-              <span className="text-xs text-muted-foreground">{item.label}</span>
-              <span className="text-lg leading-none font-bold sm:text-2xl">
-                {(totals[item.key] ?? 0).toLocaleString()}
-              </span>
-            </div>
-          ))}
+        <div className="flex min-w-[136px] flex-col justify-center gap-1 border-t px-4 py-3 text-left sm:border-t-0 sm:border-l sm:px-6 sm:py-4">
+          <span className="text-xs text-muted-foreground">Total leads</span>
+          <span className="text-lg leading-none font-bold sm:text-2xl">
+            {totalLeads.toLocaleString()}
+          </span>
         </div>
       </CardHeader>
       <CardContent className="px-2 sm:p-6">
+        {series.length > 1 && (
+          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 px-2 text-xs text-muted-foreground sm:px-0">
+            {series.map((item) => (
+              <div key={item.key} className="flex min-w-0 items-center gap-2">
+                <span
+                  className="size-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: `var(--color-${item.key})` }}
+                />
+                <span className="max-w-[180px] truncate">{item.label}</span>
+                <span className="tabular-nums text-foreground">{(totals[item.key] ?? 0).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
           <LineChart
             accessibilityLayer
@@ -181,7 +200,7 @@ export function ChartLineInteractive({ imports, templates }: Props) {
                 dot={false}
                 activeDot={{
                   r: 4,
-                  fill: "var(--primary)",
+                  fill: `var(--color-${item.key})`,
                   stroke: "var(--background)",
                   strokeWidth: 2,
                 }}

@@ -177,6 +177,7 @@ export type ValidationResult = {
   remove_blank_rows?: boolean
   dash_values_blank?: boolean
   require_both_email_phone?: boolean
+  generate_description?: boolean
 }
 
 export type HistoryAction =

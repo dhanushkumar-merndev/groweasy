@@ -113,6 +113,7 @@ export const validateImportSchema = z.object({
   remove_blank_rows: z.boolean().default(true),
   dash_values_blank: z.boolean().default(true),
   require_both_email_phone: z.boolean().default(false),
+  generate_description: z.boolean().default(false),
 })
 
 export const saveImportSchema = z.object({

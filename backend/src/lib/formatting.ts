@@ -182,8 +182,9 @@ export function cleanRowWithTemplate(
     const extractedValue = extractTargetValue(rawValue, column)
     const sanitized = sanitizeCellValue(extractedValue)
     const formatted = applyFormattingRules(sanitized, column.format_rules)
+    const normalized = normalizeTextSpelling(formatted, column)
 
-    cleaned_data[column.key] = formatted
+    cleaned_data[column.key] = normalized
   }
 
   const missing_fields = getMissingFieldsForTemplate(template, cleaned_data, options)
@@ -272,6 +273,7 @@ function hasValue(value: unknown) {
 }
 
 function findSourceValue(row: RowData, column: TemplateColumn) {
+  const target = normalizeKey(`${column.key} ${column.label}`)
   const candidates = new Set([
     normalizeMeaningKey(column.key),
     normalizeMeaningKey(column.label),
@@ -281,6 +283,10 @@ function findSourceValue(row: RowData, column: TemplateColumn) {
   for (const [key, value] of Object.entries(row)) {
     const normalized = normalizeMeaningKey(key)
 
+    if (target.includes("description") && isContactSourceKey(normalized)) {
+      continue
+    }
+
     if (candidates.has(normalized)) {
       return value
     }
@@ -288,6 +294,10 @@ function findSourceValue(row: RowData, column: TemplateColumn) {
 
   for (const [key, value] of Object.entries(row)) {
     const normalized = normalizeMeaningKey(key)
+
+    if (target.includes("description") && isContactSourceKey(normalized)) {
+      continue
+    }
 
     if ([...candidates].some((candidate) => normalized.includes(candidate) || candidate.includes(normalized))) {
       return value
@@ -318,7 +328,126 @@ function extractTargetValue(value: unknown, column: TemplateColumn) {
     return parts[0] ?? text
   }
 
+  if (target === "city_city" || target.endsWith("_city") || target.startsWith("city_")) {
+    return extractLocationPart(text, "city")
+  }
+
+  if (target === "state_state" || target.endsWith("_state") || target.startsWith("state_")) {
+    return extractLocationPart(text, "state")
+  }
+
+  if (target === "country_country" || target.endsWith("_country") || target.startsWith("country_")) {
+    return extractLocationPart(text, "country")
+  }
+
+  if (target.includes("description") && isContactOnlyText(text)) {
+    return ""
+  }
+
   return value
+}
+
+function isContactOnlyText(value: string) {
+  const hasContact = EMAIL_RE.test(value) || /(?:\+|00)?\s*\d[\d\s().-]{8,}\d/.test(value)
+
+  if (!hasContact) {
+    return false
+  }
+
+  const remainder = value
+    .replace(EMAIL_RE, " ")
+    .replace(/(?:\+|00)?\s*\d[\d\s().-]{8,}\d/g, " ")
+    .replace(/\b(mailto|alt|email|phone|mobile|whatsapp|contact|details)\b/gi, " ")
+    .replace(/[|/,:;()+._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  return remainder.length < 8 || /^[a-z]+(?:\s+[a-z]+){0,2}$/i.test(remainder)
+}
+
+function isContactSourceKey(normalizedKey: string) {
+  return (
+    normalizedKey.includes("contact") ||
+    normalizedKey.includes("email") ||
+    normalizedKey.includes("mail") ||
+    normalizedKey.includes("phone") ||
+    normalizedKey.includes("mobile") ||
+    normalizedKey.includes("whatsapp") ||
+    normalizedKey.includes("mob")
+  )
+}
+
+function extractLocationPart(value: string, part: "city" | "state" | "country") {
+  const normalized = value.replace(/[,/|]+/g, " ").replace(/\s+/g, " ").trim()
+
+  if (!normalized) {
+    return ""
+  }
+
+  const country = findLocationSuffix(normalized, COUNTRY_NAMES)
+  const withoutCountry = country ? stripSuffix(normalized, country) : normalized
+  const state = findLocationSuffix(withoutCountry, INDIAN_STATE_NAMES)
+  const city = state ? stripSuffix(withoutCountry, state) : withoutCountry
+
+  if (part === "country") {
+    return country ?? ""
+  }
+
+  if (part === "state") {
+    return state ?? ""
+  }
+
+  return city || normalized
+}
+
+function findLocationSuffix(value: string, names: string[]) {
+  const normalizedValue = normalizeComparableLocation(value)
+
+  return names.find((name) => {
+    const normalizedName = normalizeComparableLocation(name)
+    return normalizedValue === normalizedName || normalizedValue.endsWith(` ${normalizedName}`)
+  })
+}
+
+function stripSuffix(value: string, suffix: string) {
+  const escaped = suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return value.replace(new RegExp(`\\s*${escaped}\\s*$`, "i"), "").trim()
+}
+
+function normalizeComparableLocation(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+function normalizeTextSpelling(value: string, column: TemplateColumn) {
+  if (!value || !shouldNormalizeSpelling(column)) {
+    return value
+  }
+
+  let normalized = value
+
+  for (const [pattern, replacement] of VALUE_SPELLING_FIXES) {
+    normalized = normalized.replace(pattern, replacement)
+  }
+
+  return normalized.replace(/\s+/g, " ").trim()
+}
+
+function shouldNormalizeSpelling(column: TemplateColumn) {
+  const target = normalizeKey(`${column.key} ${column.label}`)
+
+  if (
+    target.includes("email") ||
+    target.includes("mobile") ||
+    target.includes("phone") ||
+    target.includes("whatsapp") ||
+    target.includes("country_code") ||
+    target.includes("country code") ||
+    target.includes("dial_code")
+  ) {
+    return false
+  }
+
+  return !column.format_rules.includes("uppercase")
 }
 
 function extractCountryCode(value: string) {
@@ -403,6 +532,72 @@ const HEADER_SYNONYMS: Record<string, string> = {
   txt: "text",
   whatsp: "whatsapp",
 }
+
+const VALUE_SPELLING_FIXES: Array<[RegExp, string]> = [
+  [/\bborker\b/gi, "broker"],
+  [/\bbrokr\b/gi, "broker"],
+  [/\bborkers\b/gi, "brokers"],
+  [/\bcampain\b/gi, "campaign"],
+  [/\bcmapain\b/gi, "campaign"],
+  [/\bcmapai\b/gi, "campaign"],
+  [/\bfacbook\b/gi, "facebook"],
+  [/\bgoogel\b/gi, "google"],
+  [/\blandng\b/gi, "landing"],
+  [/\blading\b/gi, "landing"],
+  [/\bimmediat\b/gi, "immediate"],
+  [/\bimmidiate\b/gi, "immediate"],
+  [/\bintrsted\b/gi, "interested"],
+  [/\bintrested\b/gi, "interested"],
+  [/\bintersted\b/gi, "interested"],
+  [/\bnumbr\b/gi, "number"],
+  [/\bnumbrs\b/gi, "numbers"],
+  [/\bphne\b/gi, "phone"],
+  [/\btomorow\b/gi, "tomorrow"],
+  [/\btommorow\b/gi, "tomorrow"],
+  [/\bmornig\b/gi, "morning"],
+  [/\bweeknd\b/gi, "weekend"],
+  [/\baftr\b/gi, "after"],
+  [/\bmnths\b/gi, "months"],
+  [/\bmnth\b/gi, "month"],
+  [/\brecived\b/gi, "received"],
+  [/\bdilevery\b/gi, "delivery"],
+  [/\bbanglore\b/gi, "Bangalore"],
+  [/\bmumbia\b/gi, "Mumbai"],
+]
+
+const COUNTRY_NAMES = ["India"]
+
+const INDIAN_STATE_NAMES = [
+  "Andhra Pradesh",
+  "Arunachal Pradesh",
+  "Assam",
+  "Bihar",
+  "Chhattisgarh",
+  "Delhi",
+  "Goa",
+  "Gujarat",
+  "Haryana",
+  "Himachal Pradesh",
+  "Jharkhand",
+  "Karnataka",
+  "Kerala",
+  "Madhya Pradesh",
+  "Maharashtra",
+  "Manipur",
+  "Meghalaya",
+  "Mizoram",
+  "Nagaland",
+  "Odisha",
+  "Punjab",
+  "Rajasthan",
+  "Sikkim",
+  "Tamil Nadu",
+  "Telangana",
+  "Tripura",
+  "Uttar Pradesh",
+  "Uttarakhand",
+  "West Bengal",
+]
 
 function formatDateLikeValue(value: string) {
   if (!value) {

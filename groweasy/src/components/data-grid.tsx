@@ -23,7 +23,7 @@ const tabs: Array<{ value: "raw" | RowStatus | "ai"; label: string }> = [
 ]
 
 const META_COLUMNS = "minmax(118px,118px) minmax(48px,48px) minmax(76px,76px)"
-const AI_COLUMN = "minmax(56px,56px)"
+const AI_COLUMN = "minmax(118px,118px)"
 const CLEANED_COLUMN_WIDTHS: Record<string, string> = {
   created_at: "minmax(140px,140px)",
   name: "minmax(200px,200px)",

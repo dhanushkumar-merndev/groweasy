@@ -70,7 +70,11 @@ export function ApiKeyManager() {
       .then((r) => r.json())
       .then((data) => {
         if (data.data?.hasKey) {
-          setSavedInfo({ provider: data.data.provider ?? "", model: data.data.model ?? "" })
+          const p = data.data.provider ?? "groq"
+          const m = data.data.model ?? "openai/gpt-oss-120b"
+          setSavedInfo({ provider: p, model: m })
+          setProvider(p)
+          setModel(m)
         }
       })
       .finally(() => setLoading(false))
@@ -85,7 +89,7 @@ export function ApiKeyManager() {
   }
 
   async function handleSave() {
-    if (!key.trim()) return
+    if (!key.trim() && !savedInfo) return
     setSaving(true)
     const res = await api("/settings/apikey", {
       method: "POST",
@@ -98,7 +102,8 @@ export function ApiKeyManager() {
       setSavedInfo({ provider, model })
       setKey("")
     } else {
-      toast.error("Failed to save API key")
+      const err = await res.json().catch(() => ({}))
+      toast.error(err?.error ?? "Failed to save API key")
     }
   }
 
@@ -112,6 +117,8 @@ export function ApiKeyManager() {
     }
   }
 
+  const hasExisting = !!savedInfo
+
   return (
     <Card>
       <CardHeader>
@@ -122,17 +129,6 @@ export function ApiKeyManager() {
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <LoaderIcon className="size-4 animate-spin" />
             Loading...
-          </div>
-        ) : savedInfo ? (
-          <div className="flex items-center justify-between rounded-lg border p-3">
-            <div className="text-sm">
-              <span className="font-medium capitalize">{savedInfo.provider}</span>
-              <span className="text-muted-foreground"> — {savedInfo.model}</span>
-            </div>
-            <Button size="sm" variant="destructive" onClick={handleRemove}>
-              <TrashIcon />
-              Remove
-            </Button>
           </div>
         ) : (
           <div className="grid gap-3">
@@ -168,13 +164,21 @@ export function ApiKeyManager() {
                 type="password"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
-                placeholder="sk-..."
+                placeholder={hasExisting ? "New key (leave blank to keep current)" : "sk-..."}
               />
             </div>
-            <Button onClick={handleSave} disabled={saving || !key.trim()}>
-              <SaveIcon />
-              {saving ? "Saving..." : "Save key"}
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={handleSave} disabled={saving || (!key.trim() && !hasExisting)}>
+                <SaveIcon />
+                {saving ? "Saving..." : hasExisting ? "Update" : "Save key"}
+              </Button>
+              {hasExisting && (
+                <Button size="sm" variant="destructive" onClick={handleRemove}>
+                  <TrashIcon />
+                  Remove
+                </Button>
+              )}
+            </div>
           </div>
         )}
       </CardContent>

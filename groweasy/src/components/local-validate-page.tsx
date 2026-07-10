@@ -70,6 +70,7 @@ export function LocalValidatePage({ importId }: { importId: string }) {
         warnings={[]}
         sheets={sheets}
         basePath={`/upload/${importId}/validate`}
+        templateName={localData?.templateName}
       />
     </div>
   )

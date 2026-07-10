@@ -97,6 +97,7 @@ router.post("/batch", async (req, res) => {
     const removeBlankRows = req.body.remove_blank_rows !== false
     const dashValuesBlank = req.body.dash_values_blank !== false
     const requireBothEmailPhone = req.body.require_both_email_phone === true
+    const generateDescription = req.body.generate_description === true
 
     const template = store.getTemplate(user.id, templateId)
 
@@ -151,6 +152,7 @@ router.post("/batch", async (req, res) => {
         remove_blank_rows: removeBlankRows,
         dash_values_blank: dashValuesBlank,
         require_both_email_phone: requireBothEmailPhone,
+        generate_description: generateDescription,
       })
       return jsonOk(res, {
         import: existingJob,
@@ -164,6 +166,7 @@ router.post("/batch", async (req, res) => {
           remove_blank_rows: removeBlankRows,
           dash_values_blank: dashValuesBlank,
           require_both_email_phone: requireBothEmailPhone,
+          generate_description: generateDescription,
         },
         next: `/upload/${importId}/validate`,
       })
@@ -190,6 +193,7 @@ router.post("/batch", async (req, res) => {
       remove_blank_rows: removeBlankRows,
       dash_values_blank: dashValuesBlank,
       require_both_email_phone: requireBothEmailPhone,
+      generate_description: generateDescription,
     }
     await setCache(cacheKeys(importId).validation, validation)
 
@@ -259,6 +263,7 @@ router.post("/:id/validate", async (req, res) => {
     const removeBlankRows = body.rows ? body.remove_blank_rows : validation.remove_blank_rows
     const dashValuesBlank = body.rows ? body.dash_values_blank : validation.dash_values_blank
     const requireBothEmailPhone = body.rows ? body.require_both_email_phone : validation.require_both_email_phone
+    const generateDescription = body.rows ? body.generate_description : validation.generate_description
     const sheets = body.rows ? summarizeSheets(validation.sheets, rows) : validation.sheets
     const warnings = mergeBlankRowWarning(validation.warnings, blankRowsRemoved)
     const nextValidation: ValidationResult = {
@@ -271,6 +276,7 @@ router.post("/:id/validate", async (req, res) => {
       remove_blank_rows: removeBlankRows,
       dash_values_blank: dashValuesBlank,
       require_both_email_phone: requireBothEmailPhone,
+      generate_description: generateDescription,
     }
 
     store.setSheets(id, sheets)
@@ -384,6 +390,7 @@ router.post("/:id/process", async (req, res) => {
       rows,
       sheets: store.listSheets(id),
       requireBothEmailPhone: validation?.require_both_email_phone ?? false,
+      generateDescription: validation?.generate_description ?? false,
     })
 
     logger.info({ importId: id, modelUsed: result.modelUsed, batches: result.batches.length, rows: result.rows.length, tokenUsage: result.tokenUsage }, "Processing complete")
@@ -453,6 +460,7 @@ router.get("/:id/stream", async (req, res) => {
       rows,
       sheets: store.listSheets(id),
       requireBothEmailPhone: validation?.require_both_email_phone ?? false,
+      generateDescription: validation?.generate_description ?? false,
       onBatchStart: async ({ batchNo, batchRows, aiRows, model }) => {
         if (closed) return
 
@@ -465,7 +473,7 @@ router.get("/:id/stream", async (req, res) => {
           model,
         })}\n\n`)
       },
-      onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage }) => {
+      onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage, aiRows, aiUsed }) => {
         if (closed) return
 
         goodCount += batch.summary.good_count
@@ -481,6 +489,8 @@ router.get("/:id/stream", async (req, res) => {
           missing_count: missingCount,
           skipped_count: skippedCount,
           ai_changed_count: aiChangedCount,
+          ai_rows: aiRows,
+          ai_used: aiUsed,
         })}\n\n`)
 
         res.write(`data: ${JSON.stringify({
@@ -490,10 +500,12 @@ router.get("/:id/stream", async (req, res) => {
           percent: totalRows > 0 ? Math.round((processedRows / totalRows) * 100) : 100,
         })}\n\n`)
 
-        res.write(`data: ${JSON.stringify({
-          type: "token_usage",
-          token_usage: tokenUsage,
-        })}\n\n`)
+        if (tokenUsage.total_tokens > 0) {
+          res.write(`data: ${JSON.stringify({
+            type: "token_usage",
+            token_usage: tokenUsage,
+          })}\n\n`)
+        }
       },
     })
 

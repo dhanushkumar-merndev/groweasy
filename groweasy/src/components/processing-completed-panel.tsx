@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { CheckCircle2Icon, CpuIcon, RadioIcon, SparklesIcon, ZapIcon } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { idbGet } from "@/lib/idb-store"
@@ -17,7 +17,9 @@ export function ProcessingCompletedPanel({ importJob }: { importJob: ImportJob }
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null)
 
   useEffect(() => {
-    idbGet<TokenUsage>(`groweasy-token-usage:${importJob.id}`).then(setTokenUsage)
+    idbGet<TokenUsage>(`groweasy-token-usage:${importJob.id}`).then((usage) => {
+      setTokenUsage(hasUsableTokenUsage(usage) ? usage : null)
+    })
   }, [importJob.id])
 
   const counts = {
@@ -99,16 +101,18 @@ function Count({ label, value }: { label: string; value: number }) {
 
 function useAnimatedNumber(value: number) {
   const [displayValue, setDisplayValue] = useState(value)
+  const previousValueRef = useRef(value)
 
   useEffect(() => {
-    const startValue = displayValue
+    const startValue = previousValueRef.current
     const endValue = value
     const difference = Math.abs(endValue - startValue)
 
-    if (difference === 0 || difference <= 2) {
-      setDisplayValue(endValue)
+    if (difference === 0) {
       return
     }
+
+    previousValueRef.current = endValue
 
     const duration = Math.min(950, Math.max(360, 180 + difference * 8))
     const startedAt = performance.now()
@@ -129,6 +133,10 @@ function useAnimatedNumber(value: number) {
   }, [value])
 
   return displayValue
+}
+
+function hasUsableTokenUsage(usage: TokenUsage | undefined | null): usage is TokenUsage {
+  return Number(usage?.total_tokens ?? 0) > 0
 }
 
 function CompletedActivity({

@@ -126,7 +126,7 @@ export const sampleTemplates: Template[] = [
       {
         key: "description",
         label: "Description",
-        source_hints: ["description", "details", "message", "requirement"],
+        source_hints: ["description", "descrptn", "free txt", "message", "requirement"],
         required: false,
         format_rules: ["dash_to_blank"],
         export_title: "description",

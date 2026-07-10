@@ -40,6 +40,8 @@ type StreamEvent =
       missing_count: number
       skipped_count: number
       ai_changed_count: number
+      ai_rows?: number
+      ai_used?: boolean
     }
   | {
       type: "progress"
@@ -69,13 +71,21 @@ type StreamEvent =
       message: string
     }
 
-type ActivityKind = "prepare" | "connect" | "send" | "receive" | "tokens" | "complete" | "error"
+type ActivityKind = "prepare" | "connect" | "send" | "receive" | "tokens" | "complete" | "error" | "fallback"
 
 type ActivityItem = {
   id: number
   kind: ActivityKind
   title: string
   detail: string
+  leaving?: boolean
+}
+
+type DisplayActivityItem = {
+  item: ActivityItem
+  slot: number
+  entering: boolean
+  exiting: boolean
 }
 
 type TokenUsage = {
@@ -84,7 +94,9 @@ type TokenUsage = {
   total_tokens: number
 }
 
-const MAX_VISIBLE_ACTIVITY = 4
+const MAX_VISIBLE_ACTIVITY = 3
+const ACTIVITY_CARD_HEIGHT = 76
+const ACTIVITY_CARD_GAP = 8
 
 export function ProcessingStreamPanel({ importId }: { importId: string }) {
   const router = useRouter()
@@ -93,6 +105,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const startedRef = useRef(false)
   const activityIdRef = useRef(0)
+  const aiFallbackUsedRef = useRef(false)
   const [pending, setPending] = useState(false)
   const [percent, setPercent] = useState(0)
   const [status, setStatus] = useState("Preparing AI processing")
@@ -101,6 +114,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
   const [processedRows, setProcessedRows] = useState(0)
   const [totalRows, setTotalRows] = useState(0)
   const [activeBatch, setActiveBatch] = useState<{ batchNo: number; totalBatches: number } | null>(null)
+  const [aiFallbackUsed, setAiFallbackUsed] = useState(false)
   const [activity, setActivity] = useState<ActivityItem[]>([
     {
       id: 0,
@@ -120,7 +134,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
   const pushActivity = useCallback((kind: ActivityKind, title: string, detail: string) => {
     activityIdRef.current += 1
     const nextItem = { id: activityIdRef.current, kind, title, detail }
-    setActivity((items) => [nextItem, ...items].slice(0, MAX_VISIBLE_ACTIVITY))
+    setActivity((prev) => [nextItem, ...prev].slice(0, MAX_VISIBLE_ACTIVITY))
   }, [])
 
   const startProcessing = useCallback(async () => {
@@ -134,6 +148,8 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
     setProcessedRows(0)
     setTotalRows(0)
     setActiveBatch(null)
+    aiFallbackUsedRef.current = false
+    setAiFallbackUsed(false)
     activityIdRef.current = 0
     setActivity([
       {
@@ -161,6 +177,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
             remove_blank_rows: localPreview.removeBlankRows,
             dash_values_blank: localPreview.dashValuesBlank,
             require_both_email_phone: localPreview.requireBothEmailPhone,
+            generate_description: localPreview.generateDescription,
           }),
         })
 
@@ -194,11 +211,18 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
         }
 
         if (data.type === "batch_completed") {
-          setStatus(`Received batch ${data.batch_no} / ${data.total_batches}`)
+          const usedFallback = Boolean(data.ai_rows && data.ai_rows > 0 && !data.ai_used)
+          if (usedFallback) {
+            aiFallbackUsedRef.current = true
+            setAiFallbackUsed(true)
+          }
+          setStatus(usedFallback ? `Fallback completed batch ${data.batch_no} / ${data.total_batches}` : `Received batch ${data.batch_no} / ${data.total_batches}`)
           pushActivity(
-            "receive",
-            `Batch ${data.batch_no} received`,
-            `${data.good_count.toLocaleString()} good, ${data.missing_count.toLocaleString()} missing, ${data.skipped_count.toLocaleString()} skipped so far.`,
+            usedFallback ? "fallback" : "receive",
+            usedFallback ? `Batch ${data.batch_no} used fallback` : `Batch ${data.batch_no} received`,
+            usedFallback
+              ? `${data.ai_rows?.toLocaleString()} rows needed AI, but no successful model response was used.`
+              : `${data.good_count.toLocaleString()} good, ${data.missing_count.toLocaleString()} missing, ${data.skipped_count.toLocaleString()} skipped so far.`,
           )
           setCounts({
             good: data.good_count,
@@ -215,15 +239,15 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
         }
 
         if (data.type === "token_usage") {
-          setTokenUsage(data.token_usage)
-          if (data.token_usage.total_tokens > 0) {
+          if (hasUsableTokenUsage(data.token_usage)) {
+            setTokenUsage(data.token_usage)
             pushActivity(
               "tokens",
               "Token usage updated",
               `${data.token_usage.total_tokens.toLocaleString()} total tokens used so far.`,
             )
+            idbSet(`groweasy-token-usage:${importId}`, data.token_usage)
           }
-          idbSet(`groweasy-token-usage:${importId}`, data.token_usage)
         }
 
         if (data.type === "error") {
@@ -238,13 +262,18 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
         }
 
         if (data.type === "completed") {
-          if (data.token_usage) {
+          if (hasUsableTokenUsage(data.token_usage)) {
             setTokenUsage(data.token_usage)
             idbSet(`groweasy-token-usage:${importId}`, data.token_usage)
           }
           setPercent(100)
-          setStatus("AI processing completed")
-          pushActivity("complete", "Processing completed", "Clean rows are ready for review.")
+          const completedWithFallback = aiFallbackUsedRef.current
+          setStatus(completedWithFallback ? "Processing completed with fallback" : "AI processing completed")
+          pushActivity(
+            completedWithFallback ? "fallback" : "complete",
+            completedWithFallback ? "Fallback completed" : "Processing completed",
+            completedWithFallback ? "Clean rows are ready, but AI did not return usable output for at least one batch." : "Clean rows are ready for review.",
+          )
           setPending(false)
           source.close()
           sourceRef.current = null
@@ -346,7 +375,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
           </div>
           </div>
 
-          <LiveActivity items={activity} pending={pending} tokenUsage={tokenUsage} />
+          <LiveActivity items={activity} pending={pending} tokenUsage={tokenUsage} aiFallbackUsed={aiFallbackUsed} />
         </div>
 
         <div className="grid gap-3 sm:grid-cols-4">
@@ -436,11 +465,57 @@ function LiveActivity({
   items,
   pending,
   tokenUsage,
+  aiFallbackUsed,
 }: {
   items: ActivityItem[]
   pending: boolean
   tokenUsage: TokenUsage | null
+  aiFallbackUsed: boolean
 }) {
+  const [displayItems, setDisplayItems] = useState<DisplayActivityItem[]>(() =>
+    items.slice(0, MAX_VISIBLE_ACTIVITY).map((item, slot) => ({
+      item,
+      slot,
+      entering: false,
+      exiting: false,
+    })),
+  )
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setDisplayItems((current) => {
+        const currentActive = current.filter((entry) => !entry.exiting)
+        const currentIds = new Set(currentActive.map((entry) => entry.item.id))
+        const nextItems = items.slice(0, MAX_VISIBLE_ACTIVITY)
+        const nextIds = new Set(nextItems.map((item) => item.id))
+        const nextDisplay = nextItems.map((item, slot) => ({
+          item,
+          slot,
+          entering: !currentIds.has(item.id),
+          exiting: false,
+        }))
+        const exitingDisplay = currentActive
+          .filter((entry) => !nextIds.has(entry.item.id))
+          .map((entry) => ({
+            ...entry,
+            entering: false,
+            exiting: true,
+          }))
+
+        return [...nextDisplay, ...exitingDisplay]
+      })
+    })
+
+    const timeout = window.setTimeout(() => {
+      setDisplayItems((current) => current.filter((entry) => !entry.exiting))
+    }, 520)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+    }
+  }, [items])
+
   return (
     <div className="grid h-full content-start gap-3 rounded-lg border bg-background/45 p-3 overflow-auto">
       <div className="flex items-center justify-between gap-3">
@@ -457,7 +532,7 @@ function LiveActivity({
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-medium text-muted-foreground">Tokens</p>
           <p className="tabular-nums text-sm font-semibold">
-            {tokenUsage ? tokenUsage.total_tokens.toLocaleString() : "Waiting"}
+            {tokenUsage ? tokenUsage.total_tokens.toLocaleString() : aiFallbackUsed ? "Fallback" : "Waiting"}
           </p>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
@@ -472,18 +547,33 @@ function LiveActivity({
         </div>
       </div>
 
-      <div className="grid gap-2">
-        {items.slice(0, MAX_VISIBLE_ACTIVITY).map((item, index) => (
+      <div
+        className="relative overflow-hidden"
+        style={{ height: MAX_VISIBLE_ACTIVITY * ACTIVITY_CARD_HEIGHT + (MAX_VISIBLE_ACTIVITY - 1) * ACTIVITY_CARD_GAP }}
+      >
+        {displayItems.map(({ item, slot, entering, exiting }) => (
           <div
             key={item.id}
             className={cn(
-              "grid grid-cols-[28px_1fr] gap-2 rounded-md border bg-card/70 p-2.5",
-              index === 0 && "ring-1 ring-primary/25",
-              index === 1 && "opacity-90",
-              index === 2 && "opacity-75",
+              "absolute inset-x-0 grid grid-cols-[28px_1fr] gap-2 rounded-md border bg-card/70 p-2.5 will-change-transform",
+              exiting && "pointer-events-none",
             )}
+            style={{
+              height: ACTIVITY_CARD_HEIGHT,
+              opacity: exiting ? 0 : 1,
+              transform: `translateY(${slot * (ACTIVITY_CARD_HEIGHT + ACTIVITY_CARD_GAP)}px)`,
+              transitionProperty: "transform, opacity, border-color, background-color",
+              transitionDuration: exiting ? "180ms" : "420ms",
+              transitionTimingFunction: exiting ? "ease-out" : "cubic-bezier(0.22, 1, 0.36, 1)",
+              transitionDelay: exiting ? "0ms" : entering ? "260ms" : "130ms",
+              animation: entering ? "activity-card-fade-in 260ms ease-out 260ms both" : "none",
+              zIndex: exiting ? 0 : MAX_VISIBLE_ACTIVITY - slot + 1,
+            }}
           >
-            <div className="mt-0.5 flex size-7 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <div className={cn(
+              "mt-0.5 flex size-7 items-center justify-center rounded-md",
+              slot === 0 && !exiting ? "bg-primary/10 text-primary ring-1 ring-primary/25" : "bg-muted text-muted-foreground",
+            )}>
               <ActivityIcon kind={item.kind} />
             </div>
             <div className="min-w-0">
@@ -515,4 +605,8 @@ function formatModelName(model: string) {
   }
 
   return model
+}
+
+function hasUsableTokenUsage(usage: TokenUsage | undefined | null): usage is TokenUsage {
+  return Number(usage?.total_tokens ?? 0) > 0
 }

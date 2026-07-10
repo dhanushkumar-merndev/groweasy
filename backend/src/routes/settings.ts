@@ -12,14 +12,19 @@ const router = Router()
 const saveSchema = z.object({
   provider: z.enum(["groq", "openai", "anthropic", "google", "together"]),
   model: z.string().min(1),
-  key: z.string().min(1),
+  key: z.string(),
 })
 
 router.post("/apikey", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { provider, model, key } = saveSchema.parse(req.body)
-    const encrypted = encrypt(JSON.stringify({ provider, model, key }))
+    const existing = getUserDecryptedKey(user.id)
+    const actualKey = key || existing?.key || ""
+    if (!actualKey) {
+      return res.status(400).json({ error: "API key is required" })
+    }
+    const encrypted = encrypt(JSON.stringify({ provider, model, key: actualKey }))
     store.setApiKey(user.id, encrypted)
     logger.info({ userId: user.id, provider, model }, "API key saved")
     return jsonOk(res, { message: "API key saved" })

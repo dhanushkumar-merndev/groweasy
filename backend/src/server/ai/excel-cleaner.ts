@@ -22,7 +22,10 @@ import { logger } from "../../lib/logger.js"
 const primaryModel = process.env.PRIMARY_AI_MODEL ?? "openai/gpt-oss-120b"
 const fallbackModel = process.env.FALLBACK_AI_MODEL ?? "llama-3.3-70b-versatile"
 const batchSize = Number(process.env.AI_BATCH_SIZE ?? 75)
+const aiRequestBatchSize = Number(process.env.AI_REQUEST_BATCH_SIZE ?? 8)
 const maxRetries = Number(process.env.AI_MAX_RETRIES ?? 2)
+const maxCompletionTokens = Number(process.env.AI_MAX_COMPLETION_TOKENS ?? 8192)
+const reviewGoodRowsWithAi = process.env.AI_REVIEW_GOOD_ROWS !== "false"
 
 type ProcessingResult = {
   rows: CleanedRow[]
@@ -37,6 +40,8 @@ type BatchProgress = {
   totalBatches: number
   processedRows: number
   tokenUsage: ProcessingResult["tokenUsage"]
+  aiRows: number
+  aiUsed: boolean
 }
 
 type BatchStart = {
@@ -54,16 +59,23 @@ export async function processImportRows(input: {
   rows: RawImportRow[]
   sheets: ImportSheet[]
   requireBothEmailPhone?: boolean
+  generateDescription?: boolean
   onBatchStart?: (progress: BatchStart) => void | Promise<void>
   onBatchComplete?: (progress: BatchProgress) => void | Promise<void>
 }) {
   const batches: AiBatchResult[] = []
   const rowBatches = chunk(input.rows, batchSize)
   const userKey = getUserDecryptedKey(input.userId)
-  const groqApiKey = userKey?.key ?? process.env.GROQ_API_KEY ?? process.env.GROQ_MODEL_1 ?? process.env.GROQ_MODEL_2 ?? process.env.GROQ_MODEL_3
-  const groq = groqApiKey ? new Groq({ apiKey: groqApiKey }) : null
+  const allKeys = [
+    userKey?.key,
+    process.env.GROQ_API_KEY,
+    process.env.GROQ_MODEL_1,
+    process.env.GROQ_MODEL_2,
+    process.env.GROQ_MODEL_3,
+  ].filter(Boolean) as string[]
+  const groqClients = allKeys.length > 0 ? allKeys.map((k) => new Groq({ apiKey: k })) : []
   const allRows: CleanedRow[] = []
-  let modelUsed = groq ? (userKey?.model || primaryModel) : "demo-local-cleaner"
+  let modelUsed = groqClients.length > 0 ? (userKey?.model || primaryModel) : "demo-local-cleaner"
   const tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
 
   logger.info({ importId: input.importId, totalRows: input.rows.length, batchSize, totalBatches: rowBatches.length }, "Starting AI processing")
@@ -79,7 +91,7 @@ export async function processImportRows(input: {
       requireBothEmailPhone: input.requireBothEmailPhone,
     })
     const localRowsById = new Map(localRows.map((row) => [row.id, row]))
-    const rowsNeedingAi = rows.filter((row) => shouldSendToAi(localRowsById.get(row.id)))
+    const rowsNeedingAi = rows.filter((row) => shouldSendToAi(localRowsById.get(row.id), input.template, input.generateDescription))
 
     logger.info({
       importId: input.importId,
@@ -96,21 +108,22 @@ export async function processImportRows(input: {
       model: rowsNeedingAi.length > 0 ? modelUsed : "deterministic-skip-ai",
     })
 
-    const aiResult = groq && rowsNeedingAi.length > 0
+    const aiResult = groqClients.length > 0 && rowsNeedingAi.length > 0
       ? await cleanWithGroq({
-          groq,
+          groqClients,
           rows: rowsNeedingAi,
           template: input.template,
           batchNo,
           requireBothEmailPhone: input.requireBothEmailPhone,
+          generateDescription: input.generateDescription,
         }).catch(async (err) => {
-          logger.warn({ batchNo, fallbackModel, err }, "Groq call failed, falling back to deterministic cleaning")
-          modelUsed = fallbackModel
+          logger.warn({ batchNo, err }, "All Groq keys exhausted, falling back to deterministic cleaning")
           return {
             rows: cleanRowsWithTemplate(rowsNeedingAi, input.template, {
               requireBothEmailPhone: input.requireBothEmailPhone,
             }),
             usage: null,
+            aiUsed: false,
           }
         })
       : null
@@ -119,9 +132,12 @@ export async function processImportRows(input: {
       tokenUsage.prompt_tokens += aiResult.usage.prompt_tokens
       tokenUsage.completion_tokens += aiResult.usage.completion_tokens
       tokenUsage.total_tokens += aiResult.usage.total_tokens
+      logger.info({ batchNo, usage: aiResult.usage, accumulated: { ...tokenUsage } }, "Token usage accumulated")
     }
     const aiRowsById = new Map(aiRows.map((row) => [row.id, row]))
-    const cleanedRows = localRows.map((row) => aiRowsById.get(row.id) ?? row)
+    const cleanedRows = localRows
+      .map((row) => aiRowsById.get(row.id) ?? row)
+      .map((row) => enforceGeneratedDescription(row, input.template, input.generateDescription))
 
     allRows.push(...cleanedRows)
 
@@ -145,6 +161,8 @@ export async function processImportRows(input: {
       totalBatches: rowBatches.length,
       processedRows: allRows.length,
       tokenUsage: { ...tokenUsage },
+      aiRows: rowsNeedingAi.length,
+      aiUsed: aiResult?.aiUsed ?? false,
     })
   }
 
@@ -182,9 +200,17 @@ export async function processImportRows(input: {
   } satisfies ProcessingResult
 }
 
-function shouldSendToAi(row: CleanedRow | undefined) {
-  if (!row || row.status === "good") {
+function shouldSendToAi(row: CleanedRow | undefined, template: Template, generateDescription = false) {
+  if (!row) {
     return false
+  }
+
+  if (generateDescription && hasDescriptionColumn(template) && hasAiReviewableText(row, template)) {
+    return true
+  }
+
+  if (row.status === "good") {
+    return reviewGoodRowsWithAi && hasAiReviewableText(row, template)
   }
 
   if (row.status === "missing") {
@@ -192,6 +218,39 @@ function shouldSendToAi(row: CleanedRow | undefined) {
   }
 
   return row.skip_reason === "Could not map any meaningful value to the selected template."
+}
+
+function hasAiReviewableText(row: CleanedRow, template: Template) {
+  return template.columns_config.some((column) => {
+    const target = normalizeKey(`${column.key} ${column.label}`)
+
+    if (
+      target.includes("email") ||
+      target.includes("mobile") ||
+      target.includes("phone") ||
+      target.includes("whatsapp") ||
+      target.includes("country_code") ||
+      target.includes("country code") ||
+      target.includes("dial_code") ||
+      column.format_rules.includes("uppercase")
+    ) {
+      return false
+    }
+
+    const value = row.cleaned_data[column.key]
+    return typeof value === "string" && value.trim().length > 0
+  })
+}
+
+function hasDescriptionColumn(template: Template) {
+  return Boolean(getDescriptionColumnKey(template))
+}
+
+function getDescriptionColumnKey(template: Template) {
+  return template.columns_config.find((column) => {
+    const target = normalizeKey(`${column.key} ${column.label}`)
+    return target.includes("description")
+  })?.key
 }
 
 export async function getProcessedRows(importId: string, updatedAt?: string) {
@@ -205,12 +264,42 @@ export async function getProcessedRows(importId: string, updatedAt?: string) {
 }
 
 async function cleanWithGroq(input: {
-  groq: Groq
+  groqClients: Groq[]
   rows: RawImportRow[]
   template: Template
   batchNo: number
   requireBothEmailPhone?: boolean
-}): Promise<{ rows: CleanedRow[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null }> {
+  generateDescription?: boolean
+}): Promise<{ rows: CleanedRow[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null; aiUsed: boolean }> {
+  if (input.rows.length > aiRequestBatchSize) {
+    const allRows: CleanedRow[] = []
+    const totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    let aiUsed = false
+
+    for (const [index, rows] of chunk(input.rows, aiRequestBatchSize).entries()) {
+      const result = await cleanWithGroq({
+        ...input,
+        rows,
+        batchNo: Number(`${input.batchNo}.${index + 1}`),
+      })
+
+      allRows.push(...result.rows)
+      aiUsed ||= result.aiUsed
+
+      if (result.usage) {
+        totalUsage.prompt_tokens += result.usage.prompt_tokens
+        totalUsage.completion_tokens += result.usage.completion_tokens
+        totalUsage.total_tokens += result.usage.total_tokens
+      }
+    }
+
+    return {
+      rows: allRows,
+      usage: totalUsage.total_tokens > 0 ? totalUsage : null,
+      aiUsed,
+    }
+  }
+
   const localRows = cleanRowsWithTemplate(input.rows, input.template, {
     requireBothEmailPhone: input.requireBothEmailPhone,
   })
@@ -225,9 +314,15 @@ async function cleanWithGroq(input: {
   )
   const userPayload = JSON.stringify({
     batch_no: input.batchNo,
-    template: input.template.columns_config,
-    rows: input.rows,
+    template: templateHeaders,
+    rows: input.rows.map((row) => ({
+      id: row.id,
+      sheet_name: row.sheet_name,
+      row_index: row.row_index,
+      raw_data: row.raw_data,
+    })),
     output_shape: "AiBatchResult.rows only",
+    generate_description: input.generateDescription ?? false,
   })
 
   logger.info({
@@ -243,73 +338,157 @@ async function cleanWithGroq(input: {
     })),
   }, "AI request headers and row sample")
 
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const model = attempt === 0 ? primaryModel : fallbackModel
+  const keyCount = input.groqClients.length
+  const models = unique([primaryModel, fallbackModel].filter(Boolean))
+  const maxAttempts = Math.max(maxRetries + 1, keyCount * models.length)
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const clientIndex = attempt % keyCount
+    const modelIndex = Math.floor(attempt / keyCount) % models.length
+    const groq = input.groqClients[clientIndex]
+    const model = models[modelIndex]
+    const estimatedPromptTokens = estimateTokenCount(`${excelCleanerSystemPrompt}\n${userPayload}`)
     logger.info({
       batchNo: input.batchNo,
       attempt,
+      keyIndex: clientIndex,
       model,
       promptVersion: EXCEL_CLEANER_PROMPT_VERSION,
+      estimatedPromptTokens,
+      estimatedRows: input.rows.length,
       payloadPreview: truncate(userPayload, 6000),
     }, "Calling Groq API")
-    const response = await input.groq.chat.completions.create({
-      model,
-      temperature: 0.1,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: excelCleanerSystemPrompt },
-        { role: "user", content: userPayload },
-      ],
-    })
-    const content = response.choices[0]?.message?.content
-    logger.info({
-      batchNo: input.batchNo,
-      attempt,
-      model,
-      responsePreview: truncate(content ?? "", 6000),
-      finishReason: response.choices[0]?.finish_reason,
-      usage: response.usage,
-    }, "Groq API response preview")
 
-    if (!content) {
-      logger.warn({ batchNo: input.batchNo, attempt }, "Groq returned empty content, retrying")
-      continue
-    }
-
-    const parsed = parseGroqRows(content, localRows, input.template, {
-      requireBothEmailPhone: input.requireBothEmailPhone,
-    })
-
-    if (parsed) {
+    try {
+      const response = await groq.chat.completions.create({
+        model,
+        temperature: 0.1,
+        max_completion_tokens: maxCompletionTokens,
+        response_format: { type: "json_object" },
+        ...getModelOptions(model),
+        messages: [
+          { role: "system", content: excelCleanerSystemPrompt },
+          { role: "user", content: userPayload },
+        ],
+      })
+      const content = response.choices[0]?.message?.content
+      const finishReason = response.choices[0]?.finish_reason
+      const usage = normalizeGroqUsage(response.usage, excelCleanerSystemPrompt, userPayload, content ?? "")
       logger.info({
         batchNo: input.batchNo,
         attempt,
+        keyIndex: clientIndex,
         model,
-        parsedRows: parsed.length,
-        parsedSample: parsed.slice(0, 3).map((row) => ({
-          id: row.id,
-          status: row.status,
-          missing_fields: row.missing_fields,
-          cleaned_data: row.cleaned_data,
-          ai_changes: row.ai_changes,
-        })),
-      }, "Groq response parsed successfully")
-      return { rows: parsed, usage: response.usage ?? null }
+        responsePreview: truncate(content ?? "", 6000),
+        finishReason,
+        usage,
+      }, "Groq API response preview")
+
+      if (finishReason === "length") {
+        logger.warn({
+          batchNo: input.batchNo,
+          attempt,
+          keyIndex: clientIndex,
+          model,
+          usage,
+        }, "Groq response hit token limit before valid JSON, retrying")
+        continue
+      }
+
+      if (!content) {
+        logger.warn({ batchNo: input.batchNo, attempt, keyIndex: clientIndex }, "Groq returned empty content, retrying")
+        continue
+      }
+
+      const parsed = parseGroqRows(content, localRows, input.template, {
+        requireBothEmailPhone: input.requireBothEmailPhone,
+        generateDescription: input.generateDescription,
+      })
+
+      if (parsed) {
+        logger.info({
+          batchNo: input.batchNo,
+          attempt,
+          keyIndex: clientIndex,
+          model,
+          parsedRows: parsed.length,
+        }, "Groq response parsed successfully")
+        return { rows: parsed, usage, aiUsed: true }
+      }
+      logger.warn({ batchNo: input.batchNo, attempt, keyIndex: clientIndex, model, contentPreview: (content ?? "").slice(0, 300) }, "Groq returned unparseable JSON")
+    } catch (err) {
+      logger.warn({ batchNo: input.batchNo, attempt, keyIndex: clientIndex, model, err: err instanceof Error ? { message: err.message, status: (err as any).status } : err }, "Groq API call failed, retrying with next key")
     }
   }
 
-  logger.warn({ batchNo: input.batchNo }, "All Groq retries exhausted, using local fallback")
-  return { rows: localRows, usage: null }
+  logger.warn({ batchNo: input.batchNo }, "All Groq keys exhausted, using local fallback")
+  return { rows: localRows, usage: null, aiUsed: false }
+}
+
+function normalizeGroqUsage(
+  usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null | undefined,
+  systemPrompt: string,
+  userPayload: string,
+  content: string,
+) {
+  const promptTokens = Number(usage?.prompt_tokens ?? 0)
+  const completionTokens = Number(usage?.completion_tokens ?? 0)
+  const totalTokens = Number(usage?.total_tokens ?? 0)
+
+  if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+    return {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: totalTokens || promptTokens + completionTokens,
+    }
+  }
+
+  if (!content.trim()) {
+    return null
+  }
+
+  const estimatedPromptTokens = estimateTokenCount(`${systemPrompt}\n${userPayload}`)
+  const estimatedCompletionTokens = estimateTokenCount(content)
+
+  return {
+    prompt_tokens: estimatedPromptTokens,
+    completion_tokens: estimatedCompletionTokens,
+    total_tokens: estimatedPromptTokens + estimatedCompletionTokens,
+  }
+}
+
+function estimateTokenCount(text: string) {
+  return Math.max(1, Math.ceil(text.length / 4))
+}
+
+function getModelOptions(model: string) {
+  if (!supportsReasoningOptions(model)) {
+    return {}
+  }
+
+  return {
+    reasoning_effort: "low" as const,
+    reasoning_format: "hidden" as const,
+  }
+}
+
+function supportsReasoningOptions(model: string) {
+  const normalized = model.toLowerCase()
+  return normalized.includes("gpt-oss") || normalized.includes("qwen")
 }
 
 function parseGroqRows(
   content: string,
   fallbackRows: CleanedRow[],
   template: Template,
-  options: { requireBothEmailPhone?: boolean } = {},
+  options: { requireBothEmailPhone?: boolean; generateDescription?: boolean } = {},
 ) {
   try {
-    const parsed = JSON.parse(content) as { rows?: CleanedRow[] }
+    const cleaned = content.replace(/```(?:json)?\s*/gi, "").replace(/\s*```/g, "").trim()
+    const firstBrace = cleaned.indexOf("{")
+    const lastBrace = cleaned.lastIndexOf("}")
+    const json = firstBrace >= 0 && lastBrace > firstBrace ? cleaned.slice(firstBrace, lastBrace + 1) : cleaned
+    const parsed = JSON.parse(json) as { rows?: CleanedRow[] }
 
     if (!Array.isArray(parsed.rows)) {
       logger.warn("Groq response missing rows array")
@@ -318,7 +497,7 @@ function parseGroqRows(
 
     const fallbackById = new Map(fallbackRows.map((row) => [row.id, row]))
 
-    return parsed.rows.map((row) => normalizeAiRow(row, fallbackById.get(row.id), template, options))
+    return parsed.rows.map((row, index) => normalizeAiRow(row, fallbackById.get(row.id) ?? fallbackRows[index], template, options))
   } catch {
     logger.warn("Failed to parse Groq JSON response")
     return null
@@ -329,28 +508,133 @@ function normalizeAiRow(
   row: CleanedRow,
   fallbackRow: CleanedRow | undefined,
   template: Template,
-  options: { requireBothEmailPhone?: boolean } = {},
+  options: { requireBothEmailPhone?: boolean; generateDescription?: boolean } = {},
 ): CleanedRow {
   const base = fallbackRow ?? row
-  const inputData = row.cleaned_data ?? fallbackRow?.cleaned_data ?? {}
+  const inputData = extractAiCleanedData(row, fallbackRow, template)
   const cleanedData = { ...inputData }
 
   for (const column of template.columns_config) {
     const currentValue = inputData[column.key] ?? ""
     const formatted = applyFormattingRules(sanitizeCellValue(currentValue), column.format_rules)
-    cleanedData[column.key] = normalizeColumnValue(column.key, column.label, formatted)
+    const normalized = normalizeColumnValue(column.key, column.label, formatted)
+    const fallbackValue = fallbackRow?.cleaned_data[column.key]
+
+    cleanedData[column.key] =
+      isContactColumn(column.key, column.label) && !normalized && hasText(fallbackValue)
+        ? fallbackValue ?? ""
+        : normalized
   }
 
   const missingFields = getMissingFieldsForTemplate(template, cleanedData, options)
+  const finalMissingFields = addGeneratedDescriptionMissingField(missingFields, cleanedData, template, options.generateDescription)
 
   return {
     ...base,
     ...row,
     cleaned_data: cleanedData,
-    status: row.status === "skipped" ? "skipped" : missingFields.length > 0 ? "missing" : "good",
-    missing_fields: row.status === "skipped" ? [] : missingFields,
-    ai_changes: normalizeAiChanges(row.ai_changes ?? [], cleanedData),
+    status: row.status === "skipped" ? "skipped" : finalMissingFields.length > 0 ? "missing" : "good",
+    missing_fields: row.status === "skipped" ? [] : finalMissingFields,
+    ai_changes: normalizeAiChanges(row.ai_changes, cleanedData),
   }
+}
+
+function extractAiCleanedData(row: CleanedRow, fallbackRow: CleanedRow | undefined, template: Template) {
+  const rowData = (row.cleaned_data && typeof row.cleaned_data === "object" ? row.cleaned_data : {}) as CleanedRow["cleaned_data"]
+  const flatRow = row as unknown as Record<string, unknown>
+  const hasNestedData = template.columns_config.some((column) => rowData[column.key] !== undefined)
+  const hasFlatData = template.columns_config.some((column) => flatRow[column.key] !== undefined)
+  const cleanedData: CleanedRow["cleaned_data"] = { ...(fallbackRow?.cleaned_data ?? {}) }
+
+  if (hasNestedData) {
+    for (const column of template.columns_config) {
+      if (rowData[column.key] !== undefined) {
+        cleanedData[column.key] = chooseAiValue(column.key, column.label, rowData[column.key], cleanedData[column.key])
+      }
+    }
+
+    return cleanedData
+  }
+
+  if (hasFlatData) {
+    for (const column of template.columns_config) {
+      if (flatRow[column.key] !== undefined) {
+        cleanedData[column.key] = chooseAiValue(
+          column.key,
+          column.label,
+          flatRow[column.key] as CleanedRow["cleaned_data"][string],
+          cleanedData[column.key],
+        )
+      }
+    }
+
+    return cleanedData
+  }
+
+  return cleanedData
+}
+
+function chooseAiValue(key: string, label: string, aiValue: unknown, fallbackValue: unknown) {
+  if (isContactColumn(key, label) && !hasText(aiValue) && hasText(fallbackValue)) {
+    return fallbackValue as CleanedRow["cleaned_data"][string]
+  }
+
+  return aiValue as CleanedRow["cleaned_data"][string]
+}
+
+function isContactColumn(key: string, label: string) {
+  const target = normalizeKey(`${key} ${label}`)
+
+  return (
+    target.includes("email") ||
+    target.includes("mobile") ||
+    target.includes("phone") ||
+    target.includes("whatsapp") ||
+    target.includes("country_code") ||
+    target.includes("country code") ||
+    target.includes("dial_code")
+  )
+}
+
+function hasText(value: unknown) {
+  return String(value ?? "").trim().length > 0
+}
+
+function enforceGeneratedDescription(row: CleanedRow, template: Template, generateDescription = false) {
+  if (row.status === "skipped") {
+    return row
+  }
+
+  const missingFields = addGeneratedDescriptionMissingField(row.missing_fields, row.cleaned_data, template, generateDescription)
+
+  if (missingFields.length === row.missing_fields.length) {
+    return row
+  }
+
+  return {
+    ...row,
+    status: "missing" as const,
+    missing_fields: missingFields,
+  }
+}
+
+function addGeneratedDescriptionMissingField(
+  missingFields: string[],
+  cleanedData: CleanedRow["cleaned_data"],
+  template: Template,
+  generateDescription = false,
+) {
+  if (!generateDescription) {
+    return missingFields
+  }
+
+  const descriptionKey = getDescriptionColumnKey(template)
+
+  if (!descriptionKey || String(cleanedData[descriptionKey] ?? "").trim()) {
+    return missingFields
+  }
+
+  return missingFields.includes(descriptionKey) ? missingFields : [...missingFields, descriptionKey]
 }
 
 function normalizeColumnValue(key: string, label: string, value: unknown) {
@@ -379,8 +663,21 @@ function normalizeColumnValue(key: string, label: string, value: unknown) {
   return text
 }
 
-function normalizeAiChanges(changes: CleanedRow["ai_changes"], cleanedData: CleanedRow["cleaned_data"]) {
-  return changes.flatMap((change) => {
+function normalizeAiChanges(changes: unknown, cleanedData: CleanedRow["cleaned_data"]) {
+  const list: CleanedRow["ai_changes"] = Array.isArray(changes)
+    ? changes
+    : typeof changes === "object" && changes !== null
+      ? Object.entries(changes).map(([field, value]) => {
+          const after = value === null || value === undefined || value === "" ? null : String(value)
+          return {
+            field,
+            before: null,
+            after,
+            reason: "Changed by AI cleaner.",
+          }
+        })
+      : []
+  return list.flatMap((change) => {
     if (isDeterministicFormattingChange(change.reason)) {
       return []
     }

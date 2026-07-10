@@ -50,6 +50,7 @@ interface ValidateClientProps {
   basePath: string
   removeBlankRows?: boolean
   dashValuesBlank?: boolean
+  templateName?: string
 }
 
 export function ValidateClient({
@@ -58,6 +59,7 @@ export function ValidateClient({
   basePath,
   removeBlankRows: initialRemoveBlankRows = true,
   dashValuesBlank: initialDashValuesBlank = true,
+  templateName,
 }: ValidateClientProps) {
   const router = useRouter()
   const [phase, setPhase] = useState<"setup" | "cleaning" | "done">("setup")
@@ -66,10 +68,11 @@ export function ValidateClient({
   const [removeBlankRows, setRemoveBlankRows] = useState<boolean | null>(null)
   const [dashValuesBlank, setDashValuesBlank] = useState<boolean | null>(null)
   const [requireBothEmailPhone, setRequireBothEmailPhone] = useState<boolean | null>(null)
-
+  const [generateDescription, setGenerateDescription] = useState<boolean | null>(null)
   const resolvedRemoveBlankRows = removeBlankRows ?? initialRemoveBlankRows
   const resolvedDashValuesBlank = dashValuesBlank ?? initialDashValuesBlank
   const resolvedRequireBothEmailPhone = requireBothEmailPhone ?? false
+  const resolvedGenerateDescription = generateDescription ?? (templateName === "Grow Easy CRM")
 
   const localSteps = useMemo(() => {
     return [
@@ -104,6 +107,7 @@ export function ValidateClient({
         setRemoveBlankRows(savedState.removeBlankRows)
         setDashValuesBlank(savedState.dashValuesBlank)
         setRequireBothEmailPhone(savedState.requireBothEmailPhone ?? false)
+        setGenerateDescription(savedState.generateDescription ?? false)
         setQuestionStep(savedState.questionStep)
         setPhase("done")
         return
@@ -112,6 +116,7 @@ export function ValidateClient({
       setRemoveBlankRows(savedState.removeBlankRows)
       setDashValuesBlank(savedState.dashValuesBlank)
       setRequireBothEmailPhone(savedState.requireBothEmailPhone ?? null)
+      setGenerateDescription(savedState.generateDescription ?? null)
       setQuestionStep(savedState.questionStep)
       setPhase(savedState.phase)
     })
@@ -151,6 +156,7 @@ export function ValidateClient({
         removeBlankRows: resolvedRemoveBlankRows,
         dashValuesBlank: resolvedDashValuesBlank,
         requireBothEmailPhone: resolvedRequireBothEmailPhone,
+        generateDescription: resolvedGenerateDescription,
       })
 
       setStepIdx(2)
@@ -167,10 +173,11 @@ export function ValidateClient({
 
       saveValidateSession(importId, {
         phase: "done",
-        questionStep: 2,
+        questionStep: 3,
         removeBlankRows: resolvedRemoveBlankRows,
         dashValuesBlank: resolvedDashValuesBlank,
         requireBothEmailPhone: resolvedRequireBothEmailPhone,
+        generateDescription: resolvedGenerateDescription,
       })
       router.push(basePath.replace(/\/validate$/, "/preview"))
     }
@@ -179,61 +186,92 @@ export function ValidateClient({
     return () => {
       cancelled = true
     }
-  }, [basePath, importId, phase, resolvedDashValuesBlank, resolvedRemoveBlankRows, resolvedRequireBothEmailPhone, router, rows])
+  }, [basePath, importId, phase, resolvedDashValuesBlank, resolvedRemoveBlankRows, resolvedRequireBothEmailPhone, resolvedGenerateDescription, router, rows])
 
-  const setupQuestions = [
-    {
-      key: "blank",
-      label: "Remove rows with blank cells",
-      detail: "Delete the whole row if any cell is empty",
-      value: removeBlankRows,
-      onAnswer: (nextValue: boolean) => {
-        saveValidateSession(importId, {
-          phase: "setup",
-          questionStep: 1,
-          removeBlankRows: nextValue,
-          dashValuesBlank,
-          requireBothEmailPhone,
-        })
-        setRemoveBlankRows(nextValue)
-        setQuestionStep(1)
+  const setupQuestions = useMemo(() => {
+    const questions: {
+      key: string; label: string; detail: string; value: boolean | null;
+      onAnswer: (nextValue: boolean) => void;
+    }[] = [
+      {
+        key: "blank",
+        label: "Remove rows with blank cells",
+        detail: "Delete the whole row if any cell is empty",
+        value: removeBlankRows,
+        onAnswer: (nextValue: boolean) => {
+          saveValidateSession(importId, {
+            phase: "setup",
+            questionStep: 1,
+            removeBlankRows: nextValue,
+            dashValuesBlank,
+            requireBothEmailPhone,
+          })
+          setRemoveBlankRows(nextValue)
+          setQuestionStep(1)
+        },
       },
-    },
-    {
-      key: "dash",
-      label: "Treat dash (-) values as blank",
-      detail: 'Convert "-" or "--" cells to empty string',
-      value: dashValuesBlank,
-      onAnswer: (nextValue: boolean) => {
-        saveValidateSession(importId, {
-          phase: "setup",
-          questionStep: 2,
-          removeBlankRows: removeBlankRows ?? initialRemoveBlankRows,
-          dashValuesBlank: nextValue,
-          requireBothEmailPhone,
-        })
-        setDashValuesBlank(nextValue)
-        setQuestionStep(2)
+      {
+        key: "dash",
+        label: "Treat dash (-) values as blank",
+        detail: 'Convert "-" or "--" cells to empty string',
+        value: dashValuesBlank,
+        onAnswer: (nextValue: boolean) => {
+          saveValidateSession(importId, {
+            phase: "setup",
+            questionStep: 2,
+            removeBlankRows: removeBlankRows ?? initialRemoveBlankRows,
+            dashValuesBlank: nextValue,
+            requireBothEmailPhone,
+            generateDescription,
+          })
+          setDashValuesBlank(nextValue)
+          setQuestionStep(2)
+        },
       },
-    },
-    {
+    ]
+
+    if (templateName === "Grow Easy CRM") {
+      questions.push({
+        key: "description",
+        label: "Generate description from row data",
+        detail: "AI will auto-fill missing descriptions using available name, project, and notes.",
+        value: generateDescription,
+        onAnswer: (nextValue: boolean) => {
+          saveValidateSession(importId, {
+            phase: "setup",
+            questionStep: 3,
+            removeBlankRows: removeBlankRows ?? initialRemoveBlankRows,
+            dashValuesBlank: dashValuesBlank ?? initialDashValuesBlank,
+            requireBothEmailPhone,
+            generateDescription: nextValue,
+          })
+          setGenerateDescription(nextValue)
+          setQuestionStep(3)
+        },
+      })
+    }
+
+    questions.push({
       key: "contact",
-      label: "Require both email and phone",
-      detail: "Yes needs both fields. No accepts either email or phone.",
-      value: requireBothEmailPhone,
-      onAnswer: (nextValue: boolean) => {
-        saveValidateSession(importId, {
-          phase: "cleaning",
-          questionStep: 2,
-          removeBlankRows: removeBlankRows ?? initialRemoveBlankRows,
-          dashValuesBlank: dashValuesBlank ?? initialDashValuesBlank,
-          requireBothEmailPhone: nextValue,
-        })
-        setRequireBothEmailPhone(nextValue)
-        setPhase("cleaning")
-      },
-    },
-  ] as const
+        label: "Require both email and phone",
+        detail: "Yes needs both fields. No accepts either email or phone.",
+        value: requireBothEmailPhone,
+        onAnswer: (nextValue: boolean) => {
+          saveValidateSession(importId, {
+            phase: "cleaning",
+            questionStep: questions.length,
+            removeBlankRows: removeBlankRows ?? initialRemoveBlankRows,
+            dashValuesBlank: dashValuesBlank ?? initialDashValuesBlank,
+            requireBothEmailPhone: nextValue,
+            generateDescription: resolvedGenerateDescription,
+          })
+          setRequireBothEmailPhone(nextValue)
+          setPhase("cleaning")
+        },
+      })
+
+    return questions
+  }, [importId, templateName, removeBlankRows, dashValuesBlank, requireBothEmailPhone, generateDescription, resolvedGenerateDescription, initialRemoveBlankRows, initialDashValuesBlank])
 
   const activeQuestion = setupQuestions[questionStep]
   const visibleQuestions = setupQuestions.slice(0, questionStep + 1)
@@ -242,11 +280,11 @@ export function ValidateClient({
     return (
       <div
         className={cn(
-          "flex flex-1 flex-col justify-center items-center gap-3 animate-in fade-in duration-500",
+          "flex flex-1 transform-gpu flex-col items-center justify-center gap-3 transition-transform duration-500 ease-out animate-in fade-in",
           questionStep > 0 && "-translate-y-2",
         )}
       >
-        <div className="w-full max-w-xl space-y-2">
+        <div className="grid w-full max-w-xl gap-2">
           {visibleQuestions.map((question, index) => (
             <QuestionOption
               key={question.key}
@@ -255,6 +293,7 @@ export function ValidateClient({
               label={question.label}
               detail={question.detail}
               disabled={index < questionStep}
+              active={index === questionStep}
             />
           ))}
         </div>
@@ -273,6 +312,7 @@ export function ValidateClient({
               label={question.label}
               detail={question.detail}
               disabled
+              active={false}
             />
           ))}
         </div>
@@ -300,6 +340,7 @@ export function ValidateClient({
             label={question.label}
             detail={question.detail}
             disabled
+            active={false}
           />
         ))}
       </div>
@@ -330,15 +371,24 @@ function QuestionOption({
   label,
   detail,
   disabled = false,
+  active = false,
 }: {
   checked: boolean | null
   onCheckedChange?: (checked: boolean) => void
   label: string
   detail: string
   disabled?: boolean
+  active?: boolean
 }) {
   return (
-    <div className="grid gap-2 rounded-lg border border-border/40 bg-card/40 px-4 py-3 transition-all duration-500 ease-out animate-in fade-in sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4">
+    <div
+      className={cn(
+        "grid transform-gpu gap-2 rounded-lg border px-4 py-3 transition-[background-color,border-color,box-shadow,opacity,transform] duration-500 ease-out sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4",
+        "animate-validate-question-enter",
+        active ? "border-primary/40 bg-primary/5 shadow-sm shadow-primary/10" : "border-border/40 bg-card/40",
+        disabled && "opacity-85",
+      )}
+    >
       <div className="min-w-0 text-left">
         <p className="text-sm font-medium">{label}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
@@ -355,7 +405,7 @@ function QuestionOption({
           size="sm"
           onClick={() => onCheckedChange?.(true)}
           className={cn(
-            "h-6 min-w-10 rounded-md px-2.5 text-xs",
+            "h-6 min-w-10 rounded-md px-2.5 text-xs transition-all duration-300",
             checked !== true && "text-muted-foreground",
           )}
           disabled={disabled}
@@ -368,7 +418,7 @@ function QuestionOption({
           size="sm"
           onClick={() => onCheckedChange?.(false)}
           className={cn(
-            "h-6 min-w-10 rounded-md px-2.5 text-xs",
+            "h-6 min-w-10 rounded-md px-2.5 text-xs transition-all duration-300",
             checked !== false && "text-muted-foreground",
           )}
           disabled={disabled}
@@ -399,6 +449,7 @@ type ValidateSessionState = {
   removeBlankRows: boolean | null
   dashValuesBlank: boolean | null
   requireBothEmailPhone?: boolean | null
+  generateDescription?: boolean | null
 }
 
 function validateSessionKey(importId: string) {
