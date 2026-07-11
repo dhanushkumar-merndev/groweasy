@@ -65,6 +65,7 @@ const limiter = rateLimit({
   max: generalRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { error: { code: "RATE_LIMITED", message: "Too many requests. Try again shortly." } },
 })
 
@@ -73,6 +74,7 @@ const authLimiter = rateLimit({
   max: authRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { error: { code: "RATE_LIMITED", message: "Too many auth requests. Try again shortly." } },
 })
 
