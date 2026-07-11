@@ -16,6 +16,11 @@ import campaignRoutes from "./routes/campaigns.js"
 import { logger } from "./lib/logger.js"
 
 const app = express()
+
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1)
+}
+
 const configuredFrontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000"
 const generalRateLimitMax = readNumberEnv("RATE_LIMIT_PER_MINUTE", 300, { min: 60, max: 2_000 })
 const authRateLimitMax = readNumberEnv("AUTH_RATE_LIMIT_PER_MINUTE", 60, { min: 20, max: 500 })
