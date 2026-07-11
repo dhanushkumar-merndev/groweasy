@@ -29,7 +29,7 @@ router.post("/export", async (req, res) => {
     const result = await exportRowsToGoogleSheet({
       spreadsheetId: body.spreadsheet_id,
       sheetName: body.sheet_name,
-      rows: store.listSavedRows(user.id, body.import_id),
+      rows: await store.listSavedRows(user.id, body.import_id),
       template,
     })
 

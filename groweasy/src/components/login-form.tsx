@@ -1,46 +1,45 @@
 "use client"
 
-import { useState } from "react"
+import { useTransition } from "react"
 import { toast } from "sonner"
 import Link from "next/link"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { GoogleIcon } from "@/components/icons/google-icon"
 import { API_BASE } from "@/lib/api-client"
 import { cn } from "@/lib/utils"
-import { FileSpreadsheetIcon, Loader2Icon, ShieldAlertIcon, SparklesIcon, ArrowRightIcon } from "lucide-react"
+import { FileSpreadsheetIcon, ShieldAlertIcon, SparklesIcon, ArrowRightIcon } from "lucide-react"
 
 export function LoginForm({
   className,
   authConfigured = false,
   ...props
 }: React.ComponentProps<"div"> & { authConfigured?: boolean }) {
-  const [pending, setPending] = useState(false)
+  const [isPending, startTransition] = useTransition()
 
   async function signInWithGoogle() {
-    setPending(true)
+    startTransition(async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/sign-in/social`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider: "google",
+            callbackURL: `${window.location.origin}/dashboard`,
+            errorCallbackURL: `${window.location.origin}/login`,
+          }),
+          credentials: "include",
+        })
+        const data = (await response.json()) as { url?: string; error?: { message?: string } }
 
-    try {
-      const response = await fetch(`${API_BASE}/api/auth/sign-in/social`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: "google",
-          callbackURL: `${window.location.origin}/dashboard`,
-          errorCallbackURL: `${window.location.origin}/login`,
-        }),
-        credentials: "include",
-      })
-      const data = (await response.json()) as { url?: string; error?: { message?: string } }
+        if (!response.ok || !data.url) {
+          throw new Error(data.error?.message ?? "Google sign-in is not configured yet.")
+        }
 
-      if (!response.ok || !data.url) {
-        throw new Error(data.error?.message ?? "Google sign-in is not configured yet.")
+        window.location.href = data.url
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Unable to start Google sign-in.")
       }
-
-      window.location.href = data.url
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to start Google sign-in.")
-      setPending(false)
-    }
+    })
   }
 
   return (
@@ -94,15 +93,11 @@ export function LoginForm({
           <Button
             variant="outline"
             type="submit"
-            disabled={pending}
+            loading={isPending}
             className="w-full gap-2.5 py-5 rounded-xl border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 hover:text-white text-zinc-200 transition-all font-semibold"
           >
-            {pending ? (
-              <Loader2Icon className="size-4 animate-spin" />
-            ) : (
-              <GoogleIcon className="size-4" />
-            )}
-            {pending ? "Connecting..." : "Sign in with Google"}
+            <GoogleIcon className="size-4" />
+            {isPending ? "Connecting..." : "Sign in with Google"}
           </Button>
 
           {/* Continue in Demo Mode Action */}

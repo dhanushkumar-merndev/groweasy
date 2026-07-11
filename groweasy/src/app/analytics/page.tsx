@@ -1,11 +1,11 @@
 import Link from "next/link"
 import type { ReactNode } from "react"
-import { ArrowRightIcon, BarChart3Icon, InboxIcon, Rows3Icon, Table2Icon } from "lucide-react"
+import { ArrowRightIcon, BarChart3Icon, InboxIcon, Rows3Icon, SparklesIcon, Table2Icon } from "lucide-react"
 
 import { AppShell } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardTitle } from "@/components/ui/card"
 import { requireCurrentUser, serverFetch } from "@/lib/server-api"
 import type { ImportJob, Template } from "@/lib/types"
 
@@ -47,10 +47,10 @@ export default async function AnalyticsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
           {templateSummaries.map((summary) => (
-            <Card key={summary.template.id} className="flex min-h-60 flex-col">
-              <CardHeader className="gap-3">
+            <Card key={summary.template.id} className="h-fit py-0">
+              <div className="grid gap-4 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="grid gap-1">
                     <CardTitle className="text-lg">{summary.template.name}</CardTitle>
@@ -63,18 +63,22 @@ export default async function AnalyticsPage() {
                     Template
                   </Badge>
                 </div>
-              </CardHeader>
-              <CardContent className="flex flex-1 flex-col justify-between gap-5">
                 <div className="grid grid-cols-3 gap-2">
                   <TemplateMetric icon={<Rows3Icon />} label="Saved" value={summary.savedRows} />
                   <TemplateMetric icon={<Table2Icon />} label="Imports" value={summary.imports} />
                   <TemplateMetric icon={<BarChart3Icon />} label="Fields" value={summary.fields} />
                 </div>
-                <Button className="w-full" render={<Link href={`/analytics/${summary.template.id}`} />}>
-                  Open rows
-                  <ArrowRightIcon />
-                </Button>
-              </CardContent>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button render={<Link href={`/analytics/${summary.template.id}?mode=ai`} />}>
+                    <SparklesIcon />
+                    AI Generate
+                  </Button>
+                  <Button variant="outline" render={<Link href={`/analytics/${summary.template.id}?mode=default`} />}>
+                    Default
+                    <ArrowRightIcon />
+                  </Button>
+                </div>
+              </div>
             </Card>
           ))}
         </div>
@@ -93,12 +97,12 @@ function TemplateMetric({
   value: number
 }) {
   return (
-    <div className="grid min-h-16 gap-1 rounded-lg border bg-muted/20 p-3">
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span className="[&_svg]:size-3.5">{icon}</span>
+    <div className="grid gap-1 rounded-lg border bg-muted/20 p-2">
+      <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+        <span className="[&_svg]:size-3">{icon}</span>
         {label}
       </div>
-      <div className="text-lg font-semibold tabular-nums">{value}</div>
+      <div className="text-base font-semibold tabular-nums">{value}</div>
     </div>
   )
 }

@@ -1,8 +1,8 @@
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { ChevronLeftIcon, ChevronRightIcon, SaveIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, Maximize2Icon, Minimize2Icon, SaveIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { EditableCell } from "@/components/editable-cell"
@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils"
 
 const PAGE_SIZE = 50
 const META_COLUMNS = "minmax(118px,118px) minmax(64px,64px)"
-const ACTION_COLUMN = "minmax(92px,92px)"
+const ACTION_COLUMN = "minmax(148px,148px)"
 const CLEANED_COLUMN_WIDTHS: Record<string, string> = {
   created_at: "minmax(140px,140px)",
   name: "minmax(200px,200px)",
@@ -44,10 +44,20 @@ export function VirtualTable({
 }) {
   const parentRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState("")
+  const [debouncedQuery, setDebouncedQuery] = useState("")
   const [localRows, setLocalRows] = useState(rows)
   const [page, setPage] = useState(0)
   const [savingRows, setSavingRows] = useState<Record<string, boolean>>({})
   const [dirtyRows, setDirtyRows] = useState<Record<string, boolean>>({})
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query)
+      setPage(0)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [query])
   const columns = template.columns_config
   const gridTemplateColumns = useMemo(
     () =>
@@ -77,13 +87,13 @@ export function VirtualTable({
   const filteredRows = useMemo(
     () =>
       localRows.filter((row) =>
-        query
+        debouncedQuery
           ? `${row.sheet_name} ${row.row_index} ${JSON.stringify(row.cleaned_data)}`
               .toLowerCase()
-              .includes(query.toLowerCase())
+              .includes(debouncedQuery.toLowerCase())
           : true
       ),
-    [localRows, query]
+    [localRows, debouncedQuery]
   )
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
   const currentPage = Math.min(page, pageCount - 1)
@@ -109,6 +119,10 @@ export function VirtualTable({
   }
 
   async function saveRow(row: SavedRow) {
+    if (!dirtyRows[row.id]) {
+      return
+    }
+
     setSavingRows((current) => ({ ...current, [row.id]: true }))
     const response = await api(`/tables/${row.import_id || importId}/rows/${row.id}`, {
       method: "PATCH",
@@ -130,18 +144,56 @@ export function VirtualTable({
     parentRef.current?.scrollTo({ top: 0, left: parentRef.current.scrollLeft })
   }
 
+  async function exportTemplateExcel() {
+    const XLSX = await import("xlsx")
+    const headers = columns.map((column) => column.export_title || column.label)
+    const data = localRows.map((row) =>
+      Object.fromEntries(
+        columns.map((column, index) => [
+          headers[index],
+          row.cleaned_data[column.key] ?? "",
+        ])
+      )
+    )
+    const worksheet = XLSX.utils.json_to_sheet(data, { header: headers })
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Saved Rows")
+    XLSX.writeFile(workbook, `${template.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "template"}-rows.xlsx`)
+  }
+
   return (
-    <div className="grid gap-3">
-      <Input
-        value={query}
-        placeholder="Search saved rows"
-        onChange={(event) => {
-          setQuery(event.target.value)
-          setPage(0)
-        }}
-      />
-      <div className="overflow-hidden rounded-lg border bg-background">
-        <div ref={parentRef} className="raw-preview-scroll max-h-[clamp(360px,calc(100vh-315px),680px)] overflow-auto">
+    <div
+      className={cn(
+        "grid gap-3",
+        expanded && "fixed inset-3 z-50 grid-rows-[auto_minmax(0,1fr)] rounded-xl border bg-background p-3 shadow-2xl"
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <Input
+          value={query}
+          placeholder="Search saved rows"
+          onChange={(event) => {
+            setQuery(event.target.value)
+            setPage(0)
+          }}
+        />
+        <Button variant="outline" onClick={() => void exportTemplateExcel()} disabled={localRows.length === 0}>
+          <DownloadIcon />
+          Export
+        </Button>
+        <Button size="icon" variant="outline" onClick={() => setExpanded((current) => !current)}>
+          {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
+          <span className="sr-only">{expanded ? "Collapse table" : "Expand table"}</span>
+        </Button>
+      </div>
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-background">
+        <div
+          ref={parentRef}
+          className={cn(
+            "raw-preview-scroll overflow-auto",
+            expanded ? "min-h-0 flex-1" : "max-h-[clamp(360px,calc(100vh-315px),680px)]"
+          )}
+        >
           <div className="min-w-max">
             <div
               className="sticky top-0 z-10 grid border-b bg-muted text-sm font-medium text-foreground"
@@ -154,7 +206,15 @@ export function VirtualTable({
                   {column.label}
                 </GridCell>
               ))}
-              <GridCell head>Save</GridCell>
+              <GridCell head>
+                <div className="flex w-full items-center justify-between gap-1">
+                  <Button size="xs" variant="outline" onClick={() => void exportTemplateExcel()} disabled={localRows.length === 0}>
+                    <DownloadIcon className="size-3" />
+                    Export
+                  </Button>
+                  <span>Save</span>
+                </div>
+              </GridCell>
             </div>
             <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -181,7 +241,7 @@ export function VirtualTable({
                     <Button
                       size="sm"
                       variant={dirtyRows[row.id] ? "default" : "outline"}
-                      disabled={savingRows[row.id]}
+                      disabled={!dirtyRows[row.id] || savingRows[row.id]}
                       onClick={() => void saveRow(row)}
                     >
                       <SaveIcon className="size-3.5" />

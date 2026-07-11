@@ -1,5 +1,10 @@
+"use client"
+
+import * as React from "react"
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
+import { Loader2Icon } from "lucide-react"
+import { usePathname } from "next/navigation"
 
 import { cn } from "@/lib/utils"
 
@@ -45,16 +50,84 @@ function Button({
   variant = "default",
   size = "default",
   nativeButton,
+  loading,
+  autoLoading = true,
+  children,
+  disabled,
+  onClick,
   ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants> & { loading?: boolean; autoLoading?: boolean }) {
+  const pathname = usePathname()
+  const [pressedLoading, setPressedLoading] = React.useState(false)
+  const loadingTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isLoading = Boolean(loading || pressedLoading)
+
+  React.useEffect(() => {
+    setPressedLoading(false)
+  }, [pathname])
+
+  React.useEffect(() => {
+    return () => {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current)
+      }
+    }
+  }, [])
+
+  function clearPressedLoadingSoon() {
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current)
+    }
+    loadingTimerRef.current = setTimeout(() => setPressedLoading(false), 1200)
+  }
+
+  function handleClick(event: Parameters<NonNullable<ButtonPrimitive.Props["onClick"]>>[0]) {
+    const result = onClick?.(event) as unknown
+
+    if (!autoLoading || loading || disabled || event.defaultPrevented || shouldSkipAutoLoading(event.currentTarget as HTMLElement)) {
+      return result
+    }
+
+    setPressedLoading(true)
+
+    if (isPromiseLike(result)) {
+      void result.finally(() => setPressedLoading(false))
+    } else {
+      clearPressedLoadingSoon()
+    }
+
+    return result
+  }
+
   return (
     <ButtonPrimitive
       data-slot="button"
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(buttonVariants({ variant, size, className }), isLoading && "relative")}
       nativeButton={nativeButton ?? !("render" in props)}
+      disabled={disabled || loading}
+      onClick={handleClick}
       {...props}
-    />
+    >
+      {isLoading && (
+        <span className="absolute inset-0 flex items-center justify-center">
+          <Loader2Icon className="size-4 animate-spin" />
+        </span>
+      )}
+      <span className={cn("contents", isLoading && "invisible")}>{children}</span>
+    </ButtonPrimitive>
   )
+}
+
+function shouldSkipAutoLoading(element: HTMLElement) {
+  return (
+    element.getAttribute("aria-haspopup") === "menu" ||
+    element.getAttribute("aria-haspopup") === "dialog" ||
+    element.getAttribute("data-no-auto-loading") === "true"
+  )
+}
+
+function isPromiseLike(value: unknown): value is Promise<void> {
+  return Boolean(value && typeof value === "object" && "finally" in value && typeof (value as Promise<void>).finally === "function")
 }
 
 export { Button, buttonVariants }

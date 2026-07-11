@@ -1,21 +1,15 @@
-import { AppShell } from "@/components/app-shell"
+import { AppShellSkeleton } from "@/components/skeletons/app-shell-skeleton"
 import { DashboardPageSkeleton } from "@/components/skeletons/dashboard-skeleton"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Button } from "@/components/ui/button"
+import { SkeletonActionButton } from "@/components/skeletons/page-skeletons"
 
 export default function DashboardLoading() {
   return (
-    <AppShell
+    <AppShellSkeleton
       title="Dashboard"
       description="Monitor imports, saved rows, templates, and AI cleaning history."
-      actions={
-        <Button disabled>
-          <Skeleton className="size-4" />
-          <Skeleton className="h-4 w-14" />
-        </Button>
-      }
+      actions={<SkeletonActionButton />}
     >
       <DashboardPageSkeleton />
-    </AppShell>
+    </AppShellSkeleton>
   )
 }

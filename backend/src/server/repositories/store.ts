@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import {
+  defaultTemplateId,
   demoUserId,
   sampleTemplates,
 } from "../../lib/data/sample-data.js"
@@ -113,15 +114,18 @@ async function syncSavedRowsToSupabase(userId: string, importId: string, savedRo
   }
 
   const job = state.imports.find((item) => item.id === importId && (item.user_id === userId || item.user_id === demoUserId))
+  const templateId = job?.template_id ?? defaultTemplateId
   const now = new Date().toISOString()
 
   try {
+    await ensureTemplateInSupabase(userId, templateId)
+
     const { error: importError } = await supabase
       .from("imports")
       .upsert({
         id: importId,
         user_id: userId,
-        template_id: null,
+        template_id: templateId,
         file_name: job?.file_name ?? "Imported file",
         import_name: job?.import_name ?? job?.file_name ?? "Imported file",
         status: "saved",
@@ -189,6 +193,146 @@ async function syncSavedRowsToSupabase(userId: string, importId: string, savedRo
 
 function isUuid(value: string | null | undefined) {
   return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))
+}
+
+async function ensureTemplateInSupabase(userId: string, templateId: string) {
+  const supabase = getSupabaseServiceClient()
+  if (!supabase) return
+
+  const template = state.templates.find((item) => item.id === templateId)
+    ?? sampleTemplates.find((item) => item.id === templateId)
+
+  if (!template) {
+    logger.warn({ templateId }, "Cannot sync import because template is missing locally")
+    return
+  }
+
+  const { error } = await supabase
+    .from("templates")
+      .upsert({
+        id: template.id,
+        user_id: userId,
+        name: template.name,
+        columns_config: template.columns_config,
+        formatting_rules: template.formatting_rules,
+      created_at: template.created_at,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "id" })
+
+  if (error) {
+    logger.error({ error, templateId }, "Failed to ensure template exists in Supabase")
+    throw error
+  }
+}
+
+async function listImportsFromSupabase(userId: string) {
+  const supabase = getSupabaseServiceClient()
+
+  if (!supabase) {
+    return []
+  }
+
+  const { data, error } = await supabase
+    .from("imports")
+    .select("*")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false })
+
+  if (error) {
+    logger.warn({ error, userId }, "Failed to load imports from Supabase")
+    return []
+  }
+
+  return (data ?? []).map((row) => normalizeImportRow(row))
+}
+
+async function listSavedRowsFromSupabase(userId: string, importId?: string) {
+  const supabase = getSupabaseServiceClient()
+
+  if (!supabase) {
+    return []
+  }
+
+  let query = supabase
+    .from("saved_rows")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+
+  if (importId) {
+    query = query.eq("import_id", importId)
+  }
+
+  const { data, error } = await query
+
+  if (error) {
+    logger.warn({ error, userId, importId }, "Failed to load saved rows from Supabase")
+    return []
+  }
+
+  return (data ?? []).map((row) => normalizeSavedRow(row))
+}
+
+function normalizeImportRow(row: Record<string, any>): ImportJob {
+  const now = new Date().toISOString()
+
+  return {
+    id: String(row.id),
+    user_id: String(row.user_id ?? ""),
+    template_id: String(row.template_id ?? defaultTemplateId),
+    file_name: String(row.file_name ?? "Imported file"),
+    import_name: String(row.import_name ?? row.file_name ?? "Imported file"),
+    status: normalizeImportStatus(row.status),
+    prompt_version: String(row.prompt_version ?? ""),
+    model_used: row.model_used ? String(row.model_used) : null,
+    total_sheets: numberOr(row.total_sheets, 0),
+    total_rows: numberOr(row.total_rows, 0),
+    good_count: numberOr(row.good_count, row.final_saved_count ?? 0),
+    missing_count: numberOr(row.missing_count, 0),
+    skipped_count: numberOr(row.skipped_count, 0),
+    fixed_missing_count: numberOr(row.fixed_missing_count, 0),
+    final_saved_count: numberOr(row.final_saved_count, 0),
+    blank_rows_removed: numberOr(row.blank_rows_removed, 0),
+    duplicate_count: numberOr(row.duplicate_count, 0),
+    ai_changed_count: numberOr(row.ai_changed_count, 0),
+    missing_by_field: isRecord(row.missing_by_field) ? row.missing_by_field as Record<string, number> : {},
+    sheet_summary: Array.isArray(row.sheet_summary) ? row.sheet_summary : [],
+    created_at: String(row.created_at ?? now),
+    updated_at: String(row.updated_at ?? row.created_at ?? now),
+  }
+}
+
+function normalizeSavedRow(row: Record<string, any>): SavedRow {
+  const now = new Date().toISOString()
+
+  return {
+    id: String(row.id),
+    user_id: String(row.user_id ?? ""),
+    import_id: String(row.import_id ?? ""),
+    sheet_id: row.sheet_id ? String(row.sheet_id) : null,
+    sheet_name: String(row.sheet_name ?? "Sheet"),
+    sheet_index: numberOr(row.sheet_index, 0),
+    row_index: numberOr(row.row_index, 0),
+    cleaned_data: isRecord(row.cleaned_data) ? row.cleaned_data as RowData : {},
+    ai_changes: Array.isArray(row.ai_changes) ? row.ai_changes : [],
+    created_at: String(row.created_at ?? now),
+    updated_at: String(row.updated_at ?? row.created_at ?? now),
+  }
+}
+
+function normalizeImportStatus(value: unknown): ImportStatus {
+  return ["uploaded", "validated", "processing", "processed", "saved", "failed"].includes(String(value))
+    ? String(value) as ImportStatus
+    : "saved"
+}
+
+function numberOr(value: unknown, fallback: unknown) {
+  const parsed = Number(value ?? fallback)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function isRecord(value: unknown) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value))
 }
 
 const state: StoreState = loadState()
@@ -260,6 +404,25 @@ export const store = {
     const jobs = state.imports.filter((job) => job.user_id === userId || job.user_id === demoUserId)
     logger.debug({ userId, count: jobs.length }, "List imports")
     return jobs
+  },
+
+  async listImportsForUser(userId: string) {
+    const localJobs = this.listImports(userId)
+
+    if (localJobs.length > 0) {
+      return localJobs
+    }
+
+    const dbJobs = await listImportsFromSupabase(userId)
+
+    if (dbJobs.length > 0) {
+      logger.info({ userId, count: dbJobs.length }, "Hydrated imports from Supabase")
+      state.imports = [...dbJobs, ...state.imports.filter((job) => job.user_id !== userId)]
+      persistState()
+      return dbJobs
+    }
+
+    return localJobs
   },
 
   getImport(userId: string, id: string) {
@@ -370,15 +533,64 @@ export const store = {
     return rows
   },
 
-  listSavedRows(userId: string, importId: string) {
+  async listSavedRows(userId: string, importId: string) {
     const rows = state.savedRows.filter((row) => row.import_id === importId && (row.user_id === userId || row.user_id === demoUserId))
-    logger.debug({ userId, importId, count: rows.length }, "List saved rows")
-    return rows
+
+    if (rows.length > 0) {
+      logger.debug({ userId, importId, count: rows.length }, "List saved rows")
+      return rows
+    }
+
+    const dbRows = await listSavedRowsFromSupabase(userId, importId)
+
+    if (dbRows.length > 0) {
+      logger.info({ userId, importId, count: dbRows.length }, "Hydrated saved rows from Supabase")
+      state.savedRows = [...dbRows, ...state.savedRows.filter((row) => row.import_id !== importId)]
+      persistState()
+      return dbRows
+    }
+
+    logger.debug({ userId, importId, count: 0 }, "List saved rows")
+    return []
   },
 
-  listAllSavedRows(userId: string) {
+  async listAllSavedRows(userId: string) {
     const rows = state.savedRows.filter((row) => row.user_id === userId || row.user_id === demoUserId)
-    logger.debug({ userId, count: rows.length }, "List all saved rows")
+
+    if (rows.length > 0) {
+      logger.debug({ userId, count: rows.length }, "List all saved rows")
+      return rows
+    }
+
+    const dbRows = await listSavedRowsFromSupabase(userId)
+
+    if (dbRows.length > 0) {
+      logger.info({ userId, count: dbRows.length }, "Hydrated all saved rows from Supabase")
+      state.savedRows = [...dbRows, ...state.savedRows.filter((row) => row.user_id !== userId)]
+      persistState()
+      return dbRows
+    }
+
+    logger.debug({ userId, count: 0 }, "List all saved rows")
+    return []
+  },
+
+  async listAllSavedRowsForUser(userId: string) {
+    const rows = await this.listAllSavedRows(userId)
+
+    if (rows.length > 0) {
+      return rows
+    }
+
+    const dbRows = await listSavedRowsFromSupabase(userId)
+
+    if (dbRows.length > 0) {
+      logger.info({ userId, count: dbRows.length }, "Hydrated all saved rows from Supabase")
+      state.savedRows = [...dbRows, ...state.savedRows.filter((row) => row.user_id !== userId)]
+      persistState()
+      return dbRows
+    }
+
     return rows
   },
 

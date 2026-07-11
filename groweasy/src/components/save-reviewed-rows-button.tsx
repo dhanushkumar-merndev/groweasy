@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useTransition } from "react"
 import { toast } from "sonner"
 import { SaveIcon } from "lucide-react"
 
@@ -15,37 +15,36 @@ export function SaveReviewedRowsButton({
   importId: string
   rows: CleanedRow[]
 }) {
-  const [pending, setPending] = useState(false)
+  const [isPending, startTransition] = useTransition()
 
   async function saveRows() {
-    const rowsToSave = readReviewDraft(importId) ?? rows
-    setPending(true)
+    startTransition(async () => {
+      const rowsToSave = readReviewDraft(importId) ?? rows
 
-    try {
-      const response = await api(`/imports/${importId}/save`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: rowsToSave }),
-      })
-      const data = (await response.json()) as { saved_rows?: number; error?: { message?: string } }
+      try {
+        const response = await api(`/imports/${importId}/save`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rows: rowsToSave }),
+        })
+        const data = (await response.json()) as { saved_rows?: number; error?: { message?: string } }
 
-      if (!response.ok) {
-        throw new Error(data.error?.message ?? "Unable to save rows.")
+        if (!response.ok) {
+          throw new Error(data.error?.message ?? "Unable to save rows.")
+        }
+
+        window.sessionStorage.removeItem(reviewDraftKey(importId))
+        toast.success(`Saved ${data.saved_rows ?? 0} good or fixed rows.`)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Unable to save rows.")
       }
-
-      window.sessionStorage.removeItem(reviewDraftKey(importId))
-      toast.success(`Saved ${data.saved_rows ?? 0} good or fixed rows.`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to save rows.")
-    } finally {
-      setPending(false)
-    }
+    })
   }
 
   return (
-    <Button onClick={saveRows} disabled={pending}>
+    <Button onClick={saveRows} loading={isPending}>
       <SaveIcon className="size-4" />
-      {pending ? "Saving..." : "Save good rows"}
+      Save good rows
     </Button>
   )
 }

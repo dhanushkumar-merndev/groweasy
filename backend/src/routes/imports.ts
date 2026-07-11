@@ -23,7 +23,7 @@ router.get("/", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     logger.info({ userId: user.id }, "List imports")
-    return jsonOk(res, { imports: store.listImports(user.id) })
+    return jsonOk(res, { imports: await store.listImportsForUser(user.id) })
   } catch (error) {
     return handleRouteError(res, error)
   }
@@ -233,7 +233,7 @@ router.get("/:id", async (req, res) => {
       sheets: store.listSheets(id),
       validation,
       cleaned_rows: store.listCleanedRows(id),
-      saved_rows: store.listSavedRows(user.id, id),
+      saved_rows: await store.listSavedRows(user.id, id),
     })
   } catch (error) {
     return handleRouteError(res, error)
@@ -610,7 +610,7 @@ router.post("/:id/export/excel", async (req, res) => {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)
     }
 
-    let rows = store.listSavedRows(user.id, id)
+    let rows = await store.listSavedRows(user.id, id)
 
     if (rows.length === 0) {
       rows = store.listCleanedRows(id).map((row) => ({
@@ -674,7 +674,7 @@ router.post("/:id/export/google-sheet", async (req, res) => {
     const result = await exportRowsToGoogleSheet({
       spreadsheetId: body.spreadsheet_id,
       sheetName: body.sheet_name,
-      rows: store.listSavedRows(user.id, id),
+      rows: await store.listSavedRows(user.id, id),
       template,
     })
     await store.addHistory(user.id, id, "google_sheet_export_done", result)

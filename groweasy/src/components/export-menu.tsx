@@ -14,25 +14,29 @@ import {
 
 export function ExportMenu({ importId }: { importId: string }) {
   async function exportExcel(mode: "all_good" | "same_tabs") {
-    const response = await api(`/imports/${importId}/export/excel`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode }),
-    })
+    try {
+      const response = await api(`/imports/${importId}/export/excel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      })
 
-    if (!response.ok) {
-      toast.error("Excel export failed.")
-      return
+      if (!response.ok) {
+        toast.error("Excel export failed.")
+        return
+      }
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = "cleaned-data.xlsx"
+      anchor.click()
+      URL.revokeObjectURL(url)
+      window.sessionStorage.setItem(exportedSessionKey(importId), "1")
+    } catch {
+      toast.error("Could not reach the backend. Restart the API server and try export again.")
     }
-
-    const blob = await response.blob()
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement("a")
-    anchor.href = url
-    anchor.download = "cleaned-data.xlsx"
-    anchor.click()
-    URL.revokeObjectURL(url)
-    window.sessionStorage.setItem(exportedSessionKey(importId), "1")
   }
 
   return (

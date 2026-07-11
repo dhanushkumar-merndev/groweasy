@@ -154,6 +154,18 @@ export const analyticsSuggestSchema = z.object({
   import_id: z.string().min(1),
   sheet: z.string().optional(),
   columns: z.array(z.string()).default([]),
+  template_columns: z.array(templateColumnSchema).default([]),
+  column_profiles: z.array(z.object({
+    key: z.string(),
+    label: z.string(),
+    kind: z.string(),
+    unique_count: z.number().int().min(0),
+    filled_count: z.number().int().min(0),
+    top_values: z.array(z.object({
+      name: z.string(),
+      value: z.number().int().min(0),
+    })).default([]),
+  })).default([]),
   sample_rows: z.array(rowDataSchema).default([]),
   filters: z.record(z.string(), z.string()).default({}),
 })

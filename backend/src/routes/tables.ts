@@ -11,7 +11,7 @@ const router = Router()
 router.get("/all", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
-    const rows = store.listAllSavedRows(user.id)
+    const rows = await store.listAllSavedRowsForUser(user.id)
     const columns = new Set<string>()
     for (const row of rows) {
       for (const key of Object.keys(row.cleaned_data)) {
@@ -36,8 +36,8 @@ router.get("/:importId/rows", async (req, res) => {
     }
 
     const query = tableRowsQuerySchema.parse(req.query)
-    const filtered = store
-      .listSavedRows(user.id, importId)
+    const allRows = await store.listSavedRows(user.id, importId)
+    const filtered = allRows
       .filter((row) => (query.sheet ? row.sheet_name === query.sheet : true))
       .filter((row) =>
         query.search

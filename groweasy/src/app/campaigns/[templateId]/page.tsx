@@ -3,25 +3,21 @@ import { notFound } from "next/navigation"
 import { ArrowLeftIcon, InboxIcon } from "lucide-react"
 
 import { AppShell } from "@/components/app-shell"
-import { ChartVariants } from "@/components/chart-variants"
+import { VirtualTable } from "@/components/virtual-table"
 import { StatusCountCards } from "@/components/status-count-cards"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { requireCurrentUser, serverFetch } from "@/lib/server-api"
 import type { ImportJob, SavedRow, Template } from "@/lib/types"
 
-export default async function TemplateAnalyticsPage({
+export default async function CampaignDetailPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ templateId: string }>
-  searchParams: Promise<{ mode?: string }>
 }) {
   await requireCurrentUser()
 
   const { templateId } = await params
-  const { mode } = await searchParams
-  const useAiSuggestions = mode !== "default"
   const [{ template }, { imports }] = await Promise.all([
     serverFetch<{ template: Template | null }>(`/templates/${templateId}`),
     serverFetch<{ imports: ImportJob[] }>("/imports"),
@@ -53,16 +49,16 @@ export default async function TemplateAnalyticsPage({
   }
 
   return (
-    <AppShell title={template.name} description="Chart variants for saved rows across multiple chart types.">
+    <AppShell title={template.name} description="Editable saved rows table.">
       <div className="flex items-center justify-between gap-3">
         <Button
           variant="ghost"
           size="sm"
           className="w-fit text-muted-foreground hover:text-foreground"
-          render={<Link href="/analytics" />}
+          render={<Link href="/campaigns" />}
         >
           <ArrowLeftIcon className="size-4" />
-          Templates
+          Campaigns
         </Button>
       </div>
 
@@ -79,7 +75,7 @@ export default async function TemplateAnalyticsPage({
           </CardContent>
         </Card>
       ) : (
-        <ChartVariants allRows={rows} template={template} useAiSuggestions={useAiSuggestions} />
+        <VirtualTable importId={templateImports[0].id} rows={rows} template={template} />
       )}
     </AppShell>
   )
