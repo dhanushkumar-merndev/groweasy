@@ -4,7 +4,6 @@ import {
   applyFormattingRules,
   cleanRowsWithTemplate,
   getMissingFieldsForTemplate,
-  isEssentialField,
   normalizeKey,
   normalizeTextSpelling,
   sanitizeCellValue,
@@ -22,13 +21,13 @@ import { logger } from "../../lib/logger.js"
 
 type AiProvider = "groq" | "commandcode" | "cloudflare"
 
-const groqDefaultModel = "openai/gpt-oss-120b"
+const groqDefaultModel = "meta-llama/llama-4-scout-17b-16e-instruct"
 const commandCodeDefaultModel = "deepseek/deepseek-v4-pro"
 const cloudflareDefaultModel = "@cf/google/gemma-4-26b-a4b-it"
 const primaryProvider = normalizeAiProvider(process.env.AI_PROCESS_PROVIDER ?? process.env.ROW_AI_PROVIDER ?? "cloudflare")
 const configuredPrimaryModel = process.env.AI_PROCESS_MODEL?.trim() || process.env.ROW_AI_MODEL?.trim() || process.env.CLOUDFLARE_AI_MODEL?.trim() || ""
 const primaryModel = getPrimaryModelForProvider(primaryProvider, configuredPrimaryModel)
-const fallbackModel = process.env.FALLBACK_AI_MODEL?.trim() || "llama-3.3-70b-versatile"
+const fallbackModel = process.env.FALLBACK_AI_MODEL?.trim() || "llama-3.2-70b-instruct"
 const maxRetries = readNumberEnv("AI_MAX_RETRIES", 2, { min: 0, max: 10 })
 const maxCompletionTokens = readNumberEnv("AI_MAX_COMPLETION_TOKENS", 2048, { min: 512, max: 8192 })
 const commandCodeBaseUrl = process.env.COMMAND_CODE_BASE_URL?.trim() || "https://api.commandcode.ai/provider/v1"
