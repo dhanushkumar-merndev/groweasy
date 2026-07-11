@@ -81,6 +81,13 @@ function Button({
     loadingTimerRef.current = setTimeout(() => setPressedLoading(false), 1200)
   }
 
+  function clearPressedLoadingOnNavigationTimeout() {
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current)
+    }
+    loadingTimerRef.current = setTimeout(() => setPressedLoading(false), 15000)
+  }
+
   function handleClick(event: Parameters<NonNullable<ButtonPrimitive.Props["onClick"]>>[0]) {
     const result = onClick?.(event) as unknown
 
@@ -88,10 +95,13 @@ function Button({
       return result
     }
 
+    const waitForNavigation = shouldWaitForNavigation(event, pathname)
     setPressedLoading(true)
 
     if (isPromiseLike(result)) {
       void result.finally(() => setPressedLoading(false))
+    } else if (waitForNavigation) {
+      clearPressedLoadingOnNavigationTimeout()
     } else {
       clearPressedLoadingSoon()
     }
@@ -124,6 +134,37 @@ function shouldSkipAutoLoading(element: HTMLElement) {
     element.getAttribute("aria-haspopup") === "dialog" ||
     element.getAttribute("data-no-auto-loading") === "true"
   )
+}
+
+function shouldWaitForNavigation(
+  event: Parameters<NonNullable<ButtonPrimitive.Props["onClick"]>>[0],
+  currentPathname: string,
+) {
+  if (
+    "button" in event &&
+    event.button !== 0 ||
+    "metaKey" in event && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+  ) {
+    return false
+  }
+
+  const anchor = (event.currentTarget as HTMLElement).closest("a")
+  const href = anchor?.getAttribute("href")
+
+  if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) {
+    return false
+  }
+
+  if (anchor?.target && anchor.target !== "_self") {
+    return false
+  }
+
+  try {
+    const url = new URL(href, window.location.href)
+    return url.origin === window.location.origin && url.pathname !== currentPathname
+  } catch {
+    return false
+  }
 }
 
 function isPromiseLike(value: unknown): value is Promise<void> {

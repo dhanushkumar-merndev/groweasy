@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, Maximize2Icon, Minimize2Icon, SaveIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, EyeIcon, Maximize2Icon, Minimize2Icon } from "lucide-react"
 import { toast } from "sonner"
 
 import { EditableCell } from "@/components/editable-cell"
@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils"
 
 const PAGE_SIZE = 50
 const META_COLUMNS = "minmax(118px,118px) minmax(64px,64px)"
-const ACTION_COLUMN = "minmax(148px,148px)"
+const COMPACT_META_COLUMNS = "minmax(74px,0.7fr) minmax(44px,0.35fr)"
 const CLEANED_COLUMN_WIDTHS: Record<string, string> = {
   created_at: "minmax(140px,140px)",
   name: "minmax(200px,200px)",
@@ -31,6 +31,16 @@ const CLEANED_COLUMN_WIDTHS: Record<string, string> = {
   data_source: "minmax(170px,170px)",
   possession_time: "minmax(170px,170px)",
   description: "minmax(260px,260px)",
+}
+const COMPACT_COLUMN_WIDTHS: Record<string, string> = {
+  created_at: "minmax(88px,0.85fr)",
+  name: "minmax(110px,1.2fr)",
+  email: "minmax(150px,1.6fr)",
+  country_code: "minmax(76px,0.7fr)",
+  mobile_without_country_code: "minmax(138px,1.3fr)",
+  company: "minmax(98px,1fr)",
+  city: "minmax(90px,0.9fr)",
+  state: "minmax(92px,0.95fr)",
 }
 
 export function VirtualTable({
@@ -50,6 +60,7 @@ export function VirtualTable({
   const [savingRows, setSavingRows] = useState<Record<string, boolean>>({})
   const [dirtyRows, setDirtyRows] = useState<Record<string, boolean>>({})
   const [expanded, setExpanded] = useState(false)
+  const [fullDetails, setFullDetails] = useState(false)
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -58,13 +69,25 @@ export function VirtualTable({
     }, 300)
     return () => clearTimeout(timer)
   }, [query])
-  const columns = template.columns_config
+  const templateColumns = template.columns_config
+  const compactColumnCount = 8
+  const columns = fullDetails || templateColumns.length <= compactColumnCount
+    ? templateColumns
+    : templateColumns.slice(0, compactColumnCount)
+  const hiddenColumnCount = Math.max(0, templateColumns.length - columns.length)
   const gridTemplateColumns = useMemo(
-    () =>
-      `${META_COLUMNS} ${columns
+    () => {
+      if (!fullDetails) {
+        return `${COMPACT_META_COLUMNS} ${columns
+          .map((column) => COMPACT_COLUMN_WIDTHS[column.key] ?? "minmax(96px,1fr)")
+          .join(" ")}`
+      }
+
+      return `${META_COLUMNS} ${columns
         .map((column) => CLEANED_COLUMN_WIDTHS[column.key] ?? "minmax(170px,170px)")
-        .join(" ")} ${ACTION_COLUMN}`,
-    [columns],
+        .join(" ")}`
+    },
+    [columns, fullDetails],
   )
   const suggestions = useMemo(() => {
     const values: Record<string, Set<string>> = {}
@@ -177,6 +200,12 @@ export function VirtualTable({
             setPage(0)
           }}
         />
+        {templateColumns.length > compactColumnCount ? (
+          <Button variant={fullDetails ? "secondary" : "outline"} onClick={() => setFullDetails((current) => !current)}>
+            <EyeIcon />
+            {fullDetails ? "Template view" : "Full details"}
+          </Button>
+        ) : null}
         <Button variant="outline" onClick={() => void exportTemplateExcel()} disabled={localRows.length === 0}>
           <DownloadIcon />
           Export
@@ -194,7 +223,7 @@ export function VirtualTable({
             expanded ? "min-h-0 flex-1" : "max-h-[clamp(360px,calc(100vh-315px),680px)]"
           )}
         >
-          <div className="min-w-max">
+          <div className={fullDetails ? "min-w-max" : "min-w-0"}>
             <div
               className="sticky top-0 z-10 grid border-b bg-muted text-sm font-medium text-foreground"
               style={{ gridTemplateColumns }}
@@ -206,16 +235,12 @@ export function VirtualTable({
                   {column.label}
                 </GridCell>
               ))}
-              <GridCell head>
-                <div className="flex w-full items-center justify-between gap-1">
-                  <Button size="xs" variant="outline" onClick={() => void exportTemplateExcel()} disabled={localRows.length === 0}>
-                    <DownloadIcon className="size-3" />
-                    Export
-                  </Button>
-                  <span>Save</span>
-                </div>
-              </GridCell>
             </div>
+            {!fullDetails && hiddenColumnCount > 0 ? (
+              <div className="border-b bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground">
+                Template view showing {columns.length} key fields. {hiddenColumnCount} more fields hidden.
+              </div>
+            ) : null}
             <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
               const row = pageRows[virtualRow.index]
@@ -237,17 +262,6 @@ export function VirtualTable({
                       />
                     </GridCell>
                   ))}
-                  <GridCell>
-                    <Button
-                      size="sm"
-                      variant={dirtyRows[row.id] ? "default" : "outline"}
-                      disabled={!dirtyRows[row.id] || savingRows[row.id]}
-                      onClick={() => void saveRow(row)}
-                    >
-                      <SaveIcon className="size-3.5" />
-                      {savingRows[row.id] ? "Saving" : "Save"}
-                    </Button>
-                  </GridCell>
                 </div>
               )
             })}

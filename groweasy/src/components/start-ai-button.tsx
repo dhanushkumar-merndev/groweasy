@@ -7,7 +7,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api-client"
 import { ensureLocalImport } from "@/lib/local-import-store"
-import { readLocalValidationPreview } from "@/lib/local-validation-preview"
+import { ensureLocalValidationPreview } from "@/lib/local-validation-preview"
 import type { ImportStatus } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -52,7 +52,7 @@ export function StartAiButton({
           throw new Error("Import data not found. Please upload the file again.")
         }
 
-        const localPreview = readLocalValidationPreview(importId)
+        const localPreview = await ensureLocalValidationPreview(importId)
 
         const response = await api("/imports/batch", {
           method: "POST",

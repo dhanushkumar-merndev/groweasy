@@ -37,7 +37,7 @@ export function MetricCardsSkeleton() {
 export function TemplateCardsSkeleton({ includeCreate = false }: { includeCreate?: boolean }) {
   return (
     <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {Array.from({ length: 6 }).map((_, index) => (
+      {Array.from({ length: 2 }).map((_, index) => (
         <Card key={index} className="h-fit py-0">
           <div className="grid gap-4 p-4">
             <div className="flex items-start justify-between gap-3">
@@ -144,51 +144,111 @@ export function CampaignsTableSkeleton() {
 
 export function HistoryListSkeleton() {
   return (
-    <div className="grid gap-3">
-      {Array.from({ length: 10 }).map((_, index) => (
-        <Card key={index}>
-          <CardContent className="flex items-center gap-4 p-4">
-            <Skeleton className="size-9 rounded-full" />
-            <div className="grid flex-1 gap-1">
-              <Skeleton className="h-4 w-48" />
-              <Skeleton className="h-3 w-36" />
+    <Card className="flex min-h-0 flex-1 flex-col">
+      <CardHeader>
+        <Skeleton className="h-5 w-32" />
+      </CardHeader>
+      <CardContent className="min-h-0 flex-1 overflow-y-auto">
+        <div className="grid gap-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,auto)_minmax(0,auto)] gap-4 border-b pb-2">
+            <Skeleton className="h-4 w-12" />
+            <Skeleton className="h-4 w-14" />
+            <Skeleton className="h-4 w-10" />
+            <Skeleton className="h-4 w-10" />
+          </div>
+          {Array.from({ length: 8 }).map((_, index) => (
+            <div key={index} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,auto)_minmax(0,auto)] items-center gap-4 border-b py-2.5 last:border-0">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-4 w-32" />
+              <div className="flex gap-2 justify-end">
+                <Skeleton className="h-8 w-14" />
+                <Skeleton className="h-8 w-20" />
+              </div>
             </div>
-            <Skeleton className="h-4 w-32" />
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+          ))}
+        </div>
+      </CardContent>
+      <div className="flex items-center justify-between border-t px-4 py-3">
+        <Skeleton className="h-4 w-28" />
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-8 w-8" />
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-8 w-8" />
+        </div>
+      </div>
+    </Card>
   )
 }
 
 export function TemplateFormSkeleton({ columns = 4 }: { columns?: number }) {
   return (
-    <>
-      <Skeleton className="h-8 w-28" />
-      <Card>
-        <CardContent className="grid gap-4 p-6">
-          <Skeleton className="h-5 w-40" />
+    <div className="grid gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <Skeleton className="h-8 w-28" />
+        <Skeleton className="h-8 w-36" />
+      </div>
+      <div className="rounded-lg border bg-card/40 p-4">
+        <div className="grid gap-3">
           <div className="grid gap-2">
-            <Skeleton className="h-4 w-16" />
+            <Skeleton className="h-4 w-28" />
             <Skeleton className="h-9 w-full" />
           </div>
-          <div className="grid gap-2">
-            <Skeleton className="h-4 w-16" />
-            <Skeleton className="h-9 w-full" />
+        </div>
+      </div>
+      <div className="grid gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <Skeleton className="h-5 w-20" />
+            <Skeleton className="mt-1 h-3 w-36" />
           </div>
-          {Array.from({ length: columns }).map((_, index) => (
-            <div key={index} className="grid gap-2 rounded-lg border p-3">
-              <Skeleton className="h-4 w-20" />
-              <Skeleton className="h-9 w-full" />
+        </div>
+        {Array.from({ length: columns }).map((_, index) => (
+          <div key={index} className="grid gap-4 rounded-lg border bg-card/30 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+              <Skeleton className="h-8 w-24" />
             </div>
-          ))}
-          <div className="flex gap-2 pt-2">
-            <Skeleton className="h-9 w-28" />
-            <Skeleton className="h-9 w-20" />
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(300px,0.55fr)]">
+              <div className="grid gap-3">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.45fr)]">
+                  <div className="grid gap-2">
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-9 w-full" />
+                  </div>
+                  <div className="grid gap-2">
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-9 w-full" />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-16 w-full" />
+                </div>
+              </div>
+              <div className="grid gap-3 content-start">
+                <div className="flex items-center justify-between gap-3">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-4 w-24" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {Array.from({ length: 8 }).map((_, ci) => (
+                    <Skeleton key={ci} className="h-9 w-full rounded-md" />
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
-        </CardContent>
-      </Card>
-    </>
+        ))}
+      </div>
+      <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+        <Skeleton className="h-8 w-32" />
+      </div>
+    </div>
   )
 }
 

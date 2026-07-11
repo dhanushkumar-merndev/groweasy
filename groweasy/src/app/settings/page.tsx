@@ -4,7 +4,7 @@ import { ApiKeyManager } from "./api-key-manager"
 
 export default async function SettingsPage() {
   return (
-    <AppShell title="Settings" description="Manage AI provider keys and batch tuning.">
+    <AppShell title="Settings" description="Manage Cloudflare row AI, Groq analytics, and optional user API keys.">
       <ApiKeyManager />
       <AiBatchSettings />
     </AppShell>

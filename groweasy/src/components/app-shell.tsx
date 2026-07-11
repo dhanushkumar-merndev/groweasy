@@ -3,6 +3,7 @@ import { redirect } from "next/navigation"
 import { AppSidebar } from "@/components/app-sidebar"
 import { SiteHeader } from "@/components/site-header"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import { UserStorageScope } from "@/components/user-storage-scope"
 import { getCurrentUser } from "@/lib/server-api"
 
 type AppShellProps = {
@@ -28,6 +29,7 @@ export async function AppShell({ title, description, actions, children }: AppShe
         } as React.CSSProperties
       }
     >
+      <UserStorageScope userId={user.id} />
       <AppSidebar user={user} variant="inset" />
       <SidebarInset>
         <SiteHeader title={title} description={description} actions={actions} />

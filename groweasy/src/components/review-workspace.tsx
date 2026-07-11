@@ -22,7 +22,8 @@ export function ReviewWorkspace({
   template: Template
   requireBothEmailPhone?: boolean
 }) {
-  const [draftRows, setDraftRows] = useState(() => readReviewDraft(importId) ?? rows)
+  const sourceSignature = useMemo(() => getRowsSignature(rows), [rows])
+  const [draftRows, setDraftRows] = useState(() => readReviewDraft(importId, sourceSignature) ?? rows)
   const editableRows = useMemo(
     () => normalizeReviewRows(draftRows, template, { requireBothEmailPhone }),
     [draftRows, requireBothEmailPhone, template],
@@ -30,12 +31,19 @@ export function ReviewWorkspace({
   const summary = useMemo(() => summarizeReviewRows(editableRows), [editableRows])
 
   useEffect(() => {
+    setDraftRows(readReviewDraft(importId, sourceSignature) ?? rows)
+  }, [importId, rows, sourceSignature])
+
+  useEffect(() => {
     try {
-      window.sessionStorage.setItem(reviewDraftKey(importId), JSON.stringify(editableRows))
+      window.sessionStorage.setItem(reviewDraftKey(importId), JSON.stringify({
+        signature: sourceSignature,
+        rows: editableRows,
+      }))
     } catch {
       // Best-effort draft only. The backend remains the source of truth.
     }
-  }, [editableRows, importId])
+  }, [editableRows, importId, sourceSignature])
 
   return (
     <div className="grid min-w-0 gap-4">
@@ -119,7 +127,7 @@ function reviewDraftKey(importId: string) {
   return `groweasy-review-draft:${importId}`
 }
 
-function readReviewDraft(importId: string) {
+function readReviewDraft(importId: string, sourceSignature: string) {
   if (typeof window === "undefined") {
     return null
   }
@@ -131,9 +139,22 @@ function readReviewDraft(importId: string) {
   }
 
   try {
-    return JSON.parse(rawDraft) as CleanedRow[]
+    const draft = JSON.parse(rawDraft) as { signature?: string; rows?: CleanedRow[] } | CleanedRow[]
+
+    if (Array.isArray(draft)) {
+      window.sessionStorage.removeItem(reviewDraftKey(importId))
+      return null
+    }
+
+    return draft.signature === sourceSignature && Array.isArray(draft.rows) ? draft.rows : null
   } catch {
     window.sessionStorage.removeItem(reviewDraftKey(importId))
     return null
   }
+}
+
+function getRowsSignature(rows: CleanedRow[]) {
+  return rows
+    .map((row) => `${row.id}:${row.status}:${row.ai_changes.length}:${JSON.stringify(row.cleaned_data)}`)
+    .join("|")
 }

@@ -21,7 +21,7 @@ const AI_BATCH_LIMITS = {
 }
 
 const saveSchema = z.object({
-  provider: z.enum(["groq", "commandcode"]),
+  provider: z.enum(["groq", "commandcode", "cloudflare"]),
   model: z.string().min(1),
   key: z.string(),
 })
@@ -112,8 +112,8 @@ router.get("/apikey", async (req, res) => {
     return jsonOk(res, {
       hasKey: true,
       maskedKey: "********",
-      provider: normalizeSupportedProvider(settings?.provider ?? legacyInfo?.provider ?? "groq"),
-      model: settings?.model ?? legacyInfo?.model ?? "openai/gpt-oss-120b",
+      provider: normalizeSupportedProvider(settings?.provider ?? legacyInfo?.provider ?? "cloudflare"),
+      model: settings?.model ?? legacyInfo?.model ?? "@cf/google/gemma-4-26b-a4b-it",
       useUserApiKey,
     })
   } catch (error) {
@@ -210,8 +210,8 @@ async function getActiveAiProfile(userId: string) {
       }
     : {
         source: "default" as const,
-        provider: normalizeSupportedProvider(process.env.PRIMARY_AI_PROVIDER ?? "groq"),
-        model: process.env.PRIMARY_AI_MODEL ?? "openai/gpt-oss-120b",
+        provider: normalizeSupportedProvider(process.env.AI_PROCESS_PROVIDER ?? process.env.ROW_AI_PROVIDER ?? "cloudflare"),
+        model: process.env.AI_PROCESS_MODEL ?? process.env.ROW_AI_MODEL ?? process.env.CLOUDFLARE_AI_MODEL ?? "@cf/google/gemma-4-26b-a4b-it",
       }
 }
 
@@ -225,7 +225,8 @@ function getAiTuningRecommendation(model: string) {
     normalized.includes("glm-5") ||
     normalized.includes("70b") ||
     normalized.includes("llama-4-scout") ||
-    normalized.includes("17b")
+    normalized.includes("17b") ||
+    normalized.includes("gemma-4-26b")
   ) {
     return {
       batchSize: 8,
@@ -253,13 +254,28 @@ function getAiTuningRecommendation(model: string) {
 }
 
 function normalizeSupportedProvider(provider: string) {
-  return provider.toLowerCase().replace(/[\s_-]/g, "") === "commandcode" ? "commandcode" : "groq"
+  const normalized = provider.toLowerCase().replace(/[\s_-]/g, "")
+  if (normalized === "cloudflare" || normalized === "workersai") return "cloudflare"
+  return normalized === "commandcode" ? "commandcode" : "groq"
 }
 
 export async function getUserAiSettings(userId: string): Promise<{ batchSize: number; requestBatchSize: number; detailedReviewEnabled: boolean }> {
   const dbSettings = await getDbUserAiSettings(userId)
+  const userKey = dbSettings?.use_user_api_key ? await getUserDecryptedKey(userId) : null
+
+  if (!userKey) {
+    return {
+      batchSize: 5,
+      requestBatchSize: 5,
+      detailedReviewEnabled: dbSettings?.detailed_review_enabled ?? true,
+    }
+  }
+
   const activeProvider = normalizeSupportedProvider(
-    (dbSettings?.use_user_api_key && dbSettings.provider) || process.env.PRIMARY_AI_PROVIDER || "groq"
+    userKey.provider ||
+      process.env.AI_PROCESS_PROVIDER ||
+      process.env.ROW_AI_PROVIDER ||
+      "cloudflare"
   )
   const defaultSettings = getDefaultAiSettingsForProvider(activeProvider)
   const normalized = normalizeAiSettings(dbSettings?.batch_size && dbSettings?.request_batch_size ? {
@@ -325,9 +341,9 @@ async function upsertUserAiSettings(userId: string, patch: Partial<Omit<DbUserAi
 
 function getDefaultAiSettingsForProvider(provider: string) {
   const normalizedProvider = normalizeSupportedProvider(provider)
-  const prefix = normalizedProvider === "commandcode" ? "COMMAND_CODE" : "GROQ"
-  const fallbackBatchSize = normalizedProvider === "commandcode" ? FALLBACK_AI_BATCH_DEFAULTS.batchSize : 8
-  const fallbackRequestBatchSize = normalizedProvider === "commandcode" ? FALLBACK_AI_BATCH_DEFAULTS.requestBatchSize : 8
+  const prefix = normalizedProvider === "cloudflare" ? "CLOUDFLARE" : normalizedProvider === "commandcode" ? "COMMAND_CODE" : "GROQ"
+  const fallbackBatchSize = normalizedProvider === "groq" ? 8 : FALLBACK_AI_BATCH_DEFAULTS.batchSize
+  const fallbackRequestBatchSize = normalizedProvider === "groq" ? 8 : FALLBACK_AI_BATCH_DEFAULTS.requestBatchSize
 
   return readProviderBatchDefaults(prefix, fallbackBatchSize, fallbackRequestBatchSize)
 }

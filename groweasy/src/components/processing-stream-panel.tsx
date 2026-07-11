@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button"
 import { api, API_BASE } from "@/lib/api-client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { clearLocalValidationPreview, normalizeLocalValidationRows, readLocalValidationPreview } from "@/lib/local-validation-preview"
+import { clearLocalValidationPreview, ensureLocalValidationPreview, normalizeLocalValidationRows } from "@/lib/local-validation-preview"
 import { idbSet } from "@/lib/idb-store"
 import { cn } from "@/lib/utils"
 import loaderAnimation from "../../public/loader.json"
@@ -40,8 +40,14 @@ type StreamEvent =
       missing_count: number
       skipped_count: number
       ai_changed_count: number
+      batch_good_count?: number
+      batch_missing_count?: number
+      batch_skipped_count?: number
+      batch_ai_changed_count?: number
+      batch_output_rows?: number
       ai_rows?: number
       ai_used?: boolean
+      batch_token_usage?: TokenUsage
     }
   | {
       type: "progress"
@@ -94,6 +100,22 @@ type TokenUsage = {
   total_tokens: number
 }
 
+type CurrentBatchStatus = {
+  batchNo: number
+  totalBatches: number
+  inputRows: number
+  aiRows: number
+  outputRows: number | null
+  good: number | null
+  missing: number | null
+  skipped: number | null
+  changed: number | null
+  model: string
+  aiUsed: boolean | null
+  tokenUsage: TokenUsage | null
+  phase: "sent" | "received" | "fallback"
+}
+
 const MAX_VISIBLE_ACTIVITY = 3
 const ACTIVITY_CARD_HEIGHT = 76
 const ACTIVITY_CARD_GAP = 8
@@ -106,6 +128,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
   const startedRef = useRef(false)
   const activityIdRef = useRef(0)
   const aiFallbackUsedRef = useRef(false)
+  const batchStartsRef = useRef(new Map<number, { inputRows: number; aiRows: number; model: string }>())
   const [pending, setPending] = useState(false)
   const [percent, setPercent] = useState(0)
   const [status, setStatus] = useState("Preparing AI processing")
@@ -114,6 +137,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
   const [processedRows, setProcessedRows] = useState(0)
   const [totalRows, setTotalRows] = useState(0)
   const [activeBatch, setActiveBatch] = useState<{ batchNo: number; totalBatches: number } | null>(null)
+  const [currentBatchStatus, setCurrentBatchStatus] = useState<CurrentBatchStatus | null>(null)
   const [aiFallbackUsed, setAiFallbackUsed] = useState(false)
   const [activity, setActivity] = useState<ActivityItem[]>([
     {
@@ -148,8 +172,10 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
     setProcessedRows(0)
     setTotalRows(0)
     setActiveBatch(null)
+    setCurrentBatchStatus(null)
     setTokenUsage(null)
     aiFallbackUsedRef.current = false
+    batchStartsRef.current = new Map()
     setAiFallbackUsed(false)
     activityIdRef.current = 0
     setActivity([
@@ -163,7 +189,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
     setStatus("Starting AI batch processing")
 
     try {
-      const localPreview = readLocalValidationPreview(importId)
+      const localPreview = await ensureLocalValidationPreview(importId)
 
       if (localPreview) {
         setStatus("Preparing validated rows")
@@ -204,7 +230,27 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
 
         if (data.type === "batch_started") {
           const nextBatch = { batchNo: data.batch_no, totalBatches: data.total_batches }
+          batchStartsRef.current.set(data.batch_no, {
+            inputRows: data.batch_rows,
+            aiRows: data.ai_rows,
+            model: data.model,
+          })
           setActiveBatch(nextBatch)
+          setCurrentBatchStatus((current) => current ?? {
+              batchNo: data.batch_no,
+              totalBatches: data.total_batches,
+              inputRows: data.batch_rows,
+              aiRows: data.ai_rows,
+              outputRows: null,
+              good: null,
+              missing: null,
+              skipped: null,
+              changed: null,
+              model: data.model,
+              aiUsed: null,
+              tokenUsage: null,
+              phase: "sent",
+            })
           setStatus(`Sending batch ${data.batch_no} / ${data.total_batches}`)
           pushActivity(
             "send",
@@ -219,6 +265,26 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
             aiFallbackUsedRef.current = true
             setAiFallbackUsed(true)
           }
+          const startedBatch = batchStartsRef.current.get(data.batch_no)
+          setCurrentBatchStatus({
+            batchNo: data.batch_no,
+            totalBatches: data.total_batches,
+            inputRows: startedBatch?.inputRows ?? data.batch_output_rows ?? 0,
+            aiRows: data.ai_rows ?? startedBatch?.aiRows ?? 0,
+            outputRows: data.batch_output_rows ?? (
+              (data.batch_good_count ?? 0) +
+              (data.batch_missing_count ?? 0) +
+              (data.batch_skipped_count ?? 0)
+            ),
+            good: data.batch_good_count ?? null,
+            missing: data.batch_missing_count ?? null,
+            skipped: data.batch_skipped_count ?? null,
+            changed: data.batch_ai_changed_count ?? null,
+            model: startedBatch?.model ?? "",
+            aiUsed: Boolean(data.ai_used),
+            tokenUsage: hasUsableTokenUsage(data.batch_token_usage) ? data.batch_token_usage : null,
+            phase: usedFallback ? "fallback" : "received",
+          })
           setStatus(usedFallback ? `Fallback completed batch ${data.batch_no} / ${data.total_batches}` : `Received batch ${data.batch_no} / ${data.total_batches}`)
           pushActivity(
             usedFallback ? "fallback" : "receive",
@@ -269,6 +335,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
             setTokenUsage(data.token_usage)
             idbSet(`groweasy-token-usage:${importId}`, data.token_usage)
           }
+          window.sessionStorage.removeItem(`groweasy-review-draft:${importId}`)
           setPercent(100)
           const completedWithFallback = aiFallbackUsedRef.current
           setStatus(completedWithFallback ? "Processing completed with fallback" : "AI processing completed")
@@ -382,6 +449,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
             items={activity}
             pending={pending}
             tokenUsage={tokenUsage}
+            currentBatchStatus={currentBatchStatus}
             aiFallbackUsed={aiFallbackUsed}
           />
         </div>
@@ -473,11 +541,13 @@ function LiveActivity({
   items,
   pending,
   tokenUsage,
+  currentBatchStatus,
   aiFallbackUsed,
 }: {
   items: ActivityItem[]
   pending: boolean
   tokenUsage: TokenUsage | null
+  currentBatchStatus: CurrentBatchStatus | null
   aiFallbackUsed: boolean
 }) {
   const [displayItems, setDisplayItems] = useState<DisplayActivityItem[]>(() =>
@@ -538,21 +608,26 @@ function LiveActivity({
 
       <div className={cn("rounded-md border bg-card/45 p-2.5", pending && "shine-card")}>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-medium text-muted-foreground">Token totals</p>
-          <p className="tabular-nums text-sm font-semibold">
-            {tokenUsage ? tokenUsage.total_tokens.toLocaleString() : aiFallbackUsed ? "Fallback" : "Waiting"}
-          </p>
+          <p className="text-xs font-medium text-muted-foreground">Batch tokens</p>
+          <p className="tabular-nums text-sm font-semibold">{formatBatchHeading(currentBatchStatus, aiFallbackUsed)}</p>
         </div>
-        <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-          <div>
-            <p>Input</p>
-            <p className="tabular-nums text-foreground">{tokenUsage ? tokenUsage.prompt_tokens.toLocaleString() : "-"}</p>
-          </div>
-          <div>
-            <p>Output</p>
-            <p className="tabular-nums text-foreground">{tokenUsage ? tokenUsage.completion_tokens.toLocaleString() : "-"}</p>
-          </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {currentBatchStatus
+            ? `${currentBatchStatus.inputRows.toLocaleString()} rows in batch, ${currentBatchStatus.aiRows.toLocaleString()} need AI.`
+            : "Waiting for the first batch."}
+        </p>
+        <div className="mt-2 grid grid-cols-3 gap-2 border-t pt-2 text-xs text-muted-foreground">
+          <BatchMiniStat label="Input tok" value={currentBatchStatus?.tokenUsage?.prompt_tokens} />
+          <BatchMiniStat label="Output tok" value={currentBatchStatus?.tokenUsage?.completion_tokens} />
+          <BatchMiniStat label="Total tok" value={currentBatchStatus?.tokenUsage?.total_tokens} />
         </div>
+        <p className="mt-2 truncate border-t pt-2 text-xs text-muted-foreground">
+          {currentBatchStatus
+            ? formatModelName(currentBatchStatus.model)
+            : tokenUsage
+              ? `${tokenUsage.total_tokens.toLocaleString()} total tokens used so far.`
+              : "Model pending."}
+        </p>
 
       </div>
 
@@ -594,6 +669,25 @@ function LiveActivity({
       </div>
     </div>
   )
+}
+
+function BatchMiniStat({ label, value }: { label: string; value: number | null | undefined }) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate">{label}</p>
+      <p className="tabular-nums text-foreground">{formatNullableNumber(value)}</p>
+    </div>
+  )
+}
+
+function formatBatchHeading(status: CurrentBatchStatus | null, aiFallbackUsed: boolean) {
+  if (!status) return aiFallbackUsed ? "Fallback" : "Waiting"
+  const suffix = status.phase === "sent" ? "sent" : status.phase === "fallback" ? "fallback" : "received"
+  return `Batch ${status.batchNo}/${status.totalBatches} ${suffix}`
+}
+
+function formatNullableNumber(value: number | null | undefined) {
+  return typeof value === "number" ? value.toLocaleString() : "-"
 }
 
 function ActivityIcon({ kind }: { kind: ActivityKind }) {

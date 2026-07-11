@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -32,8 +33,9 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full bg-background text-foreground" suppressHydrationWarning>
-        <script
+        <Script
           id="upload-reload-cleanup"
+          strategy="beforeInteractive"
           dangerouslySetInnerHTML={{
             __html: `
               (() => {

@@ -25,9 +25,10 @@ import type { ImportJob, Template } from "@/lib/types"
 
 async function DashboardSummary() {
   const { imports } = await serverFetch<{ imports: ImportJob[] }>("/imports")
-  const summary = imports.reduce(
+  const savedImports = imports.filter((job) => job.status === "saved")
+  const summary = savedImports.reduce(
     (acc, job) => ({
-      good_count: acc.good_count + job.good_count,
+      good_count: acc.good_count + job.final_saved_count,
       missing_count: acc.missing_count + job.missing_count,
       skipped_count: acc.skipped_count + job.skipped_count,
       ai_changed_count: acc.ai_changed_count + job.ai_changed_count,
@@ -84,13 +85,15 @@ async function DashboardTable() {
                 <TableRow key={job.id}>
                   <TableCell className="font-medium">{job.file_name}</TableCell>
                   <TableCell>{templates.find((t) => t.id === job.template_id)?.name ?? "Template"}</TableCell>
-                  <TableCell>{job.final_saved_count || job.good_count}</TableCell>
+                  <TableCell>{job.status === "saved" ? job.final_saved_count : "-"}</TableCell>
                   <TableCell>{job.status}</TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="outline" render={<Link href={`/campaigns/${job.id}`} />}>
-                      Open
-                      <ArrowRightIcon />
-                    </Button>
+                    {job.status === "saved" && (
+                      <Button size="sm" variant="outline" render={<Link href={`/campaigns/${job.template_id}`} />}>
+                        Open
+                        <ArrowRightIcon />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

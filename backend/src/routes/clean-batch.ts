@@ -55,7 +55,8 @@ router.post("/", async (req, res) => {
     logger.info({ batchId: batch.batch_id, rowCount: batch.rows.length }, "Clean batch request received")
 
     const userKey = await shouldUseUserApiKey(user.id) ? await getUserDecryptedKey(user.id) : null
-    const apiKeys = userKey ? [userKey.key, ...getGroqApiKeys()] : getGroqApiKeys()
+    const userGroqKey = userKey?.provider?.toLowerCase().replace(/[\s_-]/g, "") === "groq" ? userKey.key : null
+    const apiKeys = userGroqKey ? [userGroqKey, ...getGroqApiKeys()] : getGroqApiKeys()
     const fieldMap = await inferFieldMap(batch, apiKeys)
     const deterministicResult = cleanRowsWithFieldMap(batch, fieldMap)
     const result = await retryUnclearRowsWithGroq(batch, deterministicResult, fieldMap, apiKeys)

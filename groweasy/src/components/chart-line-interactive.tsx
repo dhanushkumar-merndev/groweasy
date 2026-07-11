@@ -33,9 +33,11 @@ function formatDate(iso: string) {
 }
 
 function buildSeries(imports: ImportJob[], templates: Template[]): ChartSeries[] {
+  const savedImports = imports.filter((job) => job.status === "saved")
+
   return [
     ...new Set(
-      imports.map((job) => templates.find((t) => t.id === job.template_id)?.name ?? "Unknown")
+      savedImports.map((job) => templates.find((t) => t.id === job.template_id)?.name ?? "Unknown")
     ),
   ].map((label, index) => ({
     key: `template_${index}`,
@@ -48,12 +50,16 @@ function buildData(imports: ImportJob[], templates: Template[], series: ChartSer
   const seriesByLabel = new Map(series.map((item) => [item.label, item.key]))
 
   for (const job of imports) {
+    if (job.status !== "saved") {
+      continue
+    }
+
     const date = formatDate(job.created_at)
     const templateName = templates.find((t) => t.id === job.template_id)?.name ?? "Unknown"
     const seriesKey = seriesByLabel.get(templateName) ?? "template_0"
     if (!dateMap.has(date)) dateMap.set(date, {})
     const entry = dateMap.get(date)!
-    entry[seriesKey] = (entry[seriesKey] ?? 0) + (job.final_saved_count || job.good_count)
+    entry[seriesKey] = (entry[seriesKey] ?? 0) + job.final_saved_count
   }
 
   return Array.from(dateMap.entries())
@@ -126,7 +132,7 @@ export function ChartLineInteractive({ imports, templates }: Props) {
         <div className="flex flex-1 flex-col justify-center gap-1 px-6 py-3">
           <CardTitle>Leads Extracted</CardTitle>
           <CardDescription>
-            Good rows saved over time
+            Saved leads over time
           </CardDescription>
         </div>
         <div className="flex min-w-[136px] flex-col justify-center gap-1 border-t px-4 py-3 text-left sm:border-t-0 sm:border-l sm:px-6 sm:py-4">

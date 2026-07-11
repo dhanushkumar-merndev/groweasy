@@ -128,9 +128,15 @@ async function suggestChartLayoutWithAi(
 
 async function buildAiRequest(userId: string) {
   const userKey = await shouldUseUserApiKey(userId) ? await getUserDecryptedKey(userId) : null
-  const provider = normalizeProvider(userKey?.provider ?? process.env.PRIMARY_AI_PROVIDER ?? "groq")
-  const model = userKey?.model?.trim() || process.env.PRIMARY_AI_MODEL?.trim() || (provider === "commandcode" ? "deepseek/deepseek-v4-pro" : "openai/gpt-oss-120b")
-  const apiKey = userKey?.key || firstEnvKey(provider === "commandcode" ? ["COMMAND_CODE_API_KEY", "COMMANDCODE_API_KEY"] : ["GROQ_API_KEY", "GROQ_API_KEYS"])
+  const provider = normalizeProvider(userKey?.provider ?? process.env.ANALYTICS_AI_PROVIDER ?? process.env.PRIMARY_AI_PROVIDER ?? "groq")
+  const model = userKey?.model?.trim() || process.env.ANALYTICS_AI_MODEL?.trim() || process.env.PRIMARY_AI_MODEL?.trim() || (provider === "cloudflare" ? "@cf/google/gemma-4-26b-a4b-it" : provider === "commandcode" ? "deepseek/deepseek-v4-pro" : "openai/gpt-oss-120b")
+  const apiKey = userKey?.key || firstEnvKey(
+    provider === "cloudflare"
+      ? ["CLOUDFLARE_API", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY"]
+      : provider === "commandcode"
+        ? ["COMMAND_CODE_API_KEY", "COMMANDCODE_API_KEY"]
+        : ["GROQ_API_KEY", "GROQ_API_KEYS"],
+  )
   if (!apiKey) return null
   const baseUrl = provider === "commandcode"
     ? process.env.COMMAND_CODE_BASE_URL?.trim() || "https://api.commandcode.ai/provider/v1"
@@ -139,6 +145,10 @@ async function buildAiRequest(userId: string) {
 }
 
 async function requestAiJson(input: { provider: string; model: string; apiKey: string; baseUrl: string; system: string; user: string }) {
+  if (input.provider === "cloudflare") {
+    return requestCloudflareAnalyticsJson(input)
+  }
+
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), chartSuggestionTimeoutMs)
   try {
@@ -168,6 +178,50 @@ async function requestAiJson(input: { provider: string; model: string; apiKey: s
     const payload = JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> }
     const content = payload.choices?.[0]?.message?.content
     if (!content) throw new Error("AI chart response was empty")
+    return content
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function requestCloudflareAnalyticsJson(input: { model: string; apiKey: string; system: string; user: string }) {
+  const credential = parseCloudflareCredential(input.apiKey)
+  if (!credential) {
+    throw new Error("Cloudflare account id is required for analytics AI. Set CLOUDFLARE_ACCOUNT_ID or save key as accountId:token.")
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), chartSuggestionTimeoutMs)
+  try {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${credential.accountId}/ai/v1/chat/completions`
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${credential.token}`,
+        "Content-Type": "application/json",
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: input.model,
+        messages: [
+          { role: "system", content: input.system },
+          { role: "user", content: input.user },
+        ],
+        temperature: 0,
+        max_tokens: chartSuggestionMaxTokens,
+      }),
+    })
+    const payload = await response.json().catch(() => ({})) as {
+      error?: { message?: string }
+      choices?: Array<{ message?: { content?: string } }>
+    }
+    if (!response.ok) {
+      const message = payload.error?.message || `Cloudflare analytics request failed with HTTP ${response.status}`
+      throw new Error(message)
+    }
+
+    const content = payload.choices?.[0]?.message?.content
+    if (!content) throw new Error("Cloudflare analytics response was empty")
     return content
   } finally {
     clearTimeout(timeout)
@@ -219,7 +273,9 @@ function normalizeLayout(value: string): ChartSuggestion["layout"] {
 }
 
 function normalizeProvider(value: string) {
-  return value.toLowerCase().replace(/[\s_-]/g, "") === "commandcode" ? "commandcode" : "groq"
+  const normalized = value.toLowerCase().replace(/[\s_-]/g, "")
+  if (normalized === "cloudflare" || normalized === "workersai") return "cloudflare"
+  return normalized === "commandcode" ? "commandcode" : "groq"
 }
 
 function firstEnvKey(names: string[]) {
@@ -228,6 +284,33 @@ function firstEnvKey(names: string[]) {
     if (value) return value
   }
   return ""
+}
+
+function parseCloudflareCredential(raw: string) {
+  const trimmed = raw.trim()
+  const defaultAccountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || process.env.CLOUDFLARE_ACCOUNT?.trim() || process.env.CF_ACCOUNT_ID?.trim() || ""
+
+  if (!trimmed) return null
+
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as { accountId?: string; account_id?: string; token?: string; key?: string }
+      const accountId = parsed.accountId?.trim() || parsed.account_id?.trim() || defaultAccountId
+      const token = parsed.token?.trim() || parsed.key?.trim() || ""
+      return accountId && token ? { accountId, token } : null
+    } catch {
+      return defaultAccountId ? { accountId: defaultAccountId, token: trimmed } : null
+    }
+  }
+
+  const separatorIndex = trimmed.indexOf(":")
+  if (separatorIndex > 0) {
+    const accountId = trimmed.slice(0, separatorIndex).trim()
+    const token = trimmed.slice(separatorIndex + 1).trim()
+    return accountId && token ? { accountId, token } : null
+  }
+
+  return defaultAccountId ? { accountId: defaultAccountId, token: trimmed } : null
 }
 
 function getAnalyticsModelOptions(model: string) {

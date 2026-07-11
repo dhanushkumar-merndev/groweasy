@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
   FileSpreadsheetIcon,
-  Loader2Icon,
   RotateCcwIcon,
   UploadCloudIcon,
   XIcon,
@@ -26,8 +25,11 @@ import {
 } from "@/lib/upload-draft"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { api } from "@/lib/api-client"
 import { cn } from "@/lib/utils"
 import type { Template } from "@/lib/types"
+
+const DEFAULT_API_ROW_LIMIT = 10
 
 /* ─── Main component ───────────────────────────────────────────────── */
 export function UploadDropzone({
@@ -45,7 +47,8 @@ export function UploadDropzone({
   const defaultTemplateId = templates[0]?.id ?? ""
   const [files, setFiles]           = useState<UploadDraftFile[]>(initialFiles)
   const [templateId, setTemplateId] = useState(initialTemplateId || defaultTemplateId)
-  const [pending, setPending]       = useState(false)
+  const [pending, setPending] = useState(false)
+  const [hasActiveUserApiKey, setHasActiveUserApiKey] = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const didRestoreDraftRef = useRef(false)
@@ -107,6 +110,24 @@ export function UploadDropzone({
 
     return () => window.cancelAnimationFrame(frame)
   }, [defaultTemplateId, importId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    api("/settings/apikey")
+      .then((response) => response.json())
+      .then((data) => {
+        if (cancelled) return
+        setHasActiveUserApiKey(Boolean(data.data?.hasKey && data.data?.useUserApiKey))
+      })
+      .catch(() => {
+        if (!cancelled) setHasActiveUserApiKey(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!didRestoreDraftRef.current) {
@@ -198,6 +219,11 @@ export function UploadDropzone({
     }
 
     const total = parsedUpload.sheets.reduce((s, sh) => s + sh.rows, 0)
+    if (!hasActiveUserApiKey && total > DEFAULT_API_ROW_LIMIT) {
+      toast.error(`Default API mode allows up to ${DEFAULT_API_ROW_LIMIT} data rows. Your file has ${total.toLocaleString()} data rows. Add and enable your own API key for larger uploads.`)
+      return
+    }
+
     if (total > 10000) {
       toast.error(`Too many rows (${total.toLocaleString()}). Maximum allowed is 10,000.`)
       return
@@ -256,7 +282,8 @@ export function UploadDropzone({
             </Button>
             <Button
               onClick={submitUpload}
-              disabled={pending || files.length === 0 || !selectedTemplate || !parsedUpload}
+              loading={pending}
+              disabled={files.length === 0 || !selectedTemplate || !parsedUpload}
               size="default"
               className={cn(
                 "relative overflow-hidden w-full sm:w-auto px-4",
@@ -265,7 +292,7 @@ export function UploadDropzone({
                 "hover:shadow-lg hover:shadow-primary/20 hover:-translate-y-px",
               )}
             >
-              {pending ? <Loader2Icon className="size-4 animate-spin" /> : "Validate"}
+              Validate
             </Button>
           </div>
         </div>

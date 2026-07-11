@@ -11,13 +11,14 @@ import { store } from "../server/repositories/store.js"
 import { processImportRows, getProcessedRows } from "../server/ai/excel-cleaner.js"
 import { buildExcelExport } from "../server/imports/export.js"
 import { exportRowsToGoogleSheet } from "../server/google/sheets.js"
-import { getUserAiSettings } from "./settings.js"
+import { getUserAiSettings, getUserDecryptedKey, shouldUseUserApiKey } from "./settings.js"
 import { logger } from "../lib/logger.js"
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
 const router = Router()
 
 const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".tsv", ".ods"]
+const DEFAULT_API_ROW_LIMIT = 10
 
 router.get("/", async (req, res) => {
   try {
@@ -63,6 +64,10 @@ router.post("/", upload.single("file"), async (req, res) => {
       removeBlankRows: options.remove_blank_rows,
       dashValuesBlank: options.dash_values_blank,
     })
+    if (await isOverDefaultApiRowLimit(user.id, validation.rows.length)) {
+      return jsonError(res, "DEFAULT_API_ROW_LIMIT", getDefaultApiRowLimitMessage(validation.rows.length), 403)
+    }
+
     const job = store.createImport(user.id, {
       id: importId,
       templateId: template.id,
@@ -126,6 +131,9 @@ router.post("/batch", async (req, res) => {
         raw_data: row.raw_data || row.data || {},
       }
     })
+    if (await isOverDefaultApiRowLimit(user.id, mappedRows.length)) {
+      return jsonError(res, "DEFAULT_API_ROW_LIMIT", getDefaultApiRowLimitMessage(mappedRows.length), 403)
+    }
 
     const mappedSheets: ImportSheet[] = sheets.map((sheet: any, idx: number) => ({
       id: sheet.id || `${importId}_sheet_${typeof sheet.sheet_index === "number" ? sheet.sheet_index + 1 : idx + 1}`,
@@ -271,6 +279,10 @@ router.post("/:id/validate", async (req, res) => {
     const generateDescription = body.rows ? body.generate_description : validation.generate_description
     const correctSpelling = body.rows ? body.correct_spelling : validation.correct_spelling
     const sheets = body.rows ? summarizeSheets(validation.sheets, rows) : validation.sheets
+    if (await isOverDefaultApiRowLimit(user.id, rows.length)) {
+      return jsonError(res, "DEFAULT_API_ROW_LIMIT", getDefaultApiRowLimitMessage(rows.length), 403)
+    }
+
     const warnings = mergeBlankRowWarning(validation.warnings, blankRowsRemoved)
     const nextValidation: ValidationResult = {
       ...validation,
@@ -363,6 +375,23 @@ function mergeBlankRowWarning(warnings: ValidationWarning[], blankRowsRemoved: n
   return nextWarnings
 }
 
+async function isOverDefaultApiRowLimit(userId: string, rowCount: number) {
+  if (rowCount <= DEFAULT_API_ROW_LIMIT) {
+    return false
+  }
+
+  const useUserKey = await shouldUseUserApiKey(userId)
+  if (!useUserKey) {
+    return true
+  }
+
+  return !(await getUserDecryptedKey(userId))
+}
+
+function getDefaultApiRowLimitMessage(rowCount: number) {
+  return `Default API mode supports up to ${DEFAULT_API_ROW_LIMIT} data rows per upload (${rowCount.toLocaleString()} found). Add and enable your own API key in Settings to process larger files.`
+}
+
 router.post("/:id/process", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
@@ -382,6 +411,9 @@ router.post("/:id/process", async (req, res) => {
     if (!template || !rows) {
       logger.warn({ importId: id }, "Preview expired during process")
       return jsonError(res, "PREVIEW_EXPIRED", "Raw preview data expired. Upload the file again.", 410)
+    }
+    if (await isOverDefaultApiRowLimit(user.id, rows.length)) {
+      return jsonError(res, "DEFAULT_API_ROW_LIMIT", getDefaultApiRowLimitMessage(rows.length), 403)
     }
 
     if (body.force) {
@@ -432,6 +464,9 @@ router.get("/:id/stream", async (req, res) => {
       logger.warn({ importId: id }, "Preview expired during processing stream")
       return jsonError(res, "PREVIEW_EXPIRED", "Raw preview data expired. Upload the file again.", 410)
     }
+    if (await isOverDefaultApiRowLimit(user.id, rows.length)) {
+      return jsonError(res, "DEFAULT_API_ROW_LIMIT", getDefaultApiRowLimitMessage(rows.length), 403)
+    }
 
     if (req.query.force === "1" || req.query.force === "true") {
       logger.info({ importId: id }, "Force streaming re-processing, invalidating processed cache")
@@ -454,6 +489,9 @@ router.get("/:id/stream", async (req, res) => {
     let missingCount = 0
     let skippedCount = 0
     let aiChangedCount = 0
+    let previousPromptTokens = 0
+    let previousCompletionTokens = 0
+    let previousTotalTokens = 0
     let closed = false
 
     req.on("close", () => {
@@ -499,9 +537,23 @@ router.get("/:id/stream", async (req, res) => {
           missing_count: missingCount,
           skipped_count: skippedCount,
           ai_changed_count: aiChangedCount,
+          batch_good_count: batch.summary.good_count,
+          batch_missing_count: batch.summary.missing_count,
+          batch_skipped_count: batch.summary.skipped_count,
+          batch_ai_changed_count: batch.summary.ai_changed_count,
+          batch_output_rows: batch.rows.length,
           ai_rows: aiRows,
           ai_used: aiUsed,
+          batch_token_usage: {
+            prompt_tokens: Math.max(0, tokenUsage.prompt_tokens - previousPromptTokens),
+            completion_tokens: Math.max(0, tokenUsage.completion_tokens - previousCompletionTokens),
+            total_tokens: Math.max(0, tokenUsage.total_tokens - previousTotalTokens),
+          },
         })}\n\n`)
+
+        previousPromptTokens = tokenUsage.prompt_tokens
+        previousCompletionTokens = tokenUsage.completion_tokens
+        previousTotalTokens = tokenUsage.total_tokens
 
         res.write(`data: ${JSON.stringify({
           type: "progress",

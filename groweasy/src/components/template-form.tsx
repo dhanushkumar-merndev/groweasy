@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useTransition, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -49,7 +49,7 @@ export function TemplateForm({ template }: { template?: Template }) {
   const editing = Boolean(template?.id)
   const [name, setName] = useState(template?.name ?? "Grow Easy CRM")
   const [columns, setColumns] = useState<TemplateColumn[]>(template?.columns_config ?? [createColumn(0)])
-  const [pending, setPending] = useState(false)
+  const [pending, startTransition] = useTransition()
 
   function updateColumn(index: number, patch: Partial<TemplateColumn>) {
     setColumns((current) =>
@@ -67,32 +67,30 @@ export function TemplateForm({ template }: { template?: Template }) {
   }
 
   async function submit() {
-    setPending(true)
+    startTransition(async () => {
+      try {
+        const response = await api(editing ? `/templates/${template?.id}` : "/templates", {
+          method: editing ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            columns_config: columns,
+            formatting_rules: {},
+          }),
+        })
+        const data = (await response.json()) as { error?: { message?: string } }
 
-    try {
-      const response = await api(editing ? `/templates/${template?.id}` : "/templates", {
-        method: editing ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          columns_config: columns,
-          formatting_rules: {},
-        }),
-      })
-      const data = (await response.json()) as { error?: { message?: string } }
+        if (!response.ok) {
+          throw new Error(data.error?.message ?? "Unable to save template.")
+        }
 
-      if (!response.ok) {
-        throw new Error(data.error?.message ?? "Unable to save template.")
+        toast.success("Template saved.")
+        router.push("/templates")
+        router.refresh()
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Unable to save template.")
       }
-
-      toast.success("Template saved.")
-      router.push("/templates")
-      router.refresh()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to save template.")
-    } finally {
-      setPending(false)
-    }
+    })
   }
 
   return (
@@ -107,9 +105,9 @@ export function TemplateForm({ template }: { template?: Template }) {
           <ArrowLeftIcon className="size-4" />
           Templates
         </Button>
-        <Button type="button" onClick={() => void submit()} disabled={pending}>
+        <Button type="button" onClick={() => void submit()} loading={pending}>
           <SaveIcon />
-          {pending ? "Saving..." : "Save template"}
+          Save template
         </Button>
       </div>
 

@@ -19,12 +19,13 @@ import { getUserAiSettings, getUserDecryptedKey, shouldUseUserApiKey } from "../
 import { summarizeCleanedRows } from "../imports/summary.js"
 import { logger } from "../../lib/logger.js"
 
-type AiProvider = "groq" | "commandcode"
+type AiProvider = "groq" | "commandcode" | "cloudflare"
 
 const groqDefaultModel = "openai/gpt-oss-120b"
 const commandCodeDefaultModel = "deepseek/deepseek-v4-pro"
-const primaryProvider = normalizeAiProvider(process.env.PRIMARY_AI_PROVIDER)
-const configuredPrimaryModel = process.env.PRIMARY_AI_MODEL?.trim() || ""
+const cloudflareDefaultModel = "@cf/google/gemma-4-26b-a4b-it"
+const primaryProvider = normalizeAiProvider(process.env.AI_PROCESS_PROVIDER ?? process.env.ROW_AI_PROVIDER ?? "cloudflare")
+const configuredPrimaryModel = process.env.AI_PROCESS_MODEL?.trim() || process.env.ROW_AI_MODEL?.trim() || process.env.CLOUDFLARE_AI_MODEL?.trim() || ""
 const primaryModel = getPrimaryModelForProvider(primaryProvider, configuredPrimaryModel)
 const fallbackModel = process.env.FALLBACK_AI_MODEL?.trim() || "llama-3.3-70b-versatile"
 const maxRetries = readNumberEnv("AI_MAX_RETRIES", 2, { min: 0, max: 10 })
@@ -33,6 +34,7 @@ const commandCodeBaseUrl = process.env.COMMAND_CODE_BASE_URL?.trim() || "https:/
 const commandCodeFallbackModel = process.env.COMMAND_CODE_FALLBACK_AI_MODEL?.trim() || ""
 const commandCodeMaxAttempts = readNumberEnv("COMMAND_CODE_AI_MAX_ATTEMPTS", 1, { min: 1, max: 6 })
 const commandCodeRequestTimeoutMs = readNumberEnv("COMMAND_CODE_AI_TIMEOUT_MS", 25_000, { min: 5_000, max: 120_000 })
+const cloudflareRequestTimeoutMs = readNumberEnv("CLOUDFLARE_AI_TIMEOUT_MS", 60_000, { min: 10_000, max: 120_000 })
 const reviewGoodRowsWithAi = process.env.AI_REVIEW_GOOD_ROWS !== "false"
 
 type ProcessingResult = {
@@ -98,7 +100,14 @@ export async function processImportRows(input: {
       requireBothEmailPhone: input.requireBothEmailPhone,
       correctSpelling: input.correctSpelling,
     })
+    const localRowsBeforeSpelling = input.correctSpelling
+      ? cleanRowsWithTemplate(rows, input.template, {
+          requireBothEmailPhone: input.requireBothEmailPhone,
+          correctSpelling: false,
+        })
+      : localRows
     const localRowsById = new Map(localRows.map((row) => [row.id, row]))
+    const localRowsBeforeSpellingById = new Map(localRowsBeforeSpelling.map((row) => [row.id, row]))
     const rowsNeedingAi = rows.filter((row) => shouldSendToAi(localRowsById.get(row.id), input.template, {
       generateDescription: input.generateDescription,
       correctSpelling: input.correctSpelling,
@@ -121,7 +130,20 @@ export async function processImportRows(input: {
 
     const detailedReviewEnabled = aiSettings.detailedReviewEnabled || input.correctSpelling === true || input.generateDescription === true
     const aiResult = aiApiKeys.length > 0 && rowsNeedingAi.length > 0
-        ? await (activeProvider === "commandcode"
+        ? await (activeProvider === "cloudflare"
+          ? cleanWithCloudflare({
+              credentials: aiApiKeys.map(parseCloudflareCredential).filter((credential): credential is CloudflareCredential => Boolean(credential)),
+              models: aiModels,
+              rows: rowsNeedingAi,
+              template: input.template,
+              batchNo,
+              aiRequestBatchSize: aiSettings.requestBatchSize,
+              requireBothEmailPhone: input.requireBothEmailPhone,
+              generateDescription: input.generateDescription,
+              correctSpelling: input.correctSpelling,
+              detailedReviewEnabled,
+            })
+          : activeProvider === "commandcode"
           ? cleanWithOpenAiCompatible({
               apiKeys: aiApiKeys,
               baseUrl: commandCodeBaseUrl,
@@ -171,7 +193,11 @@ export async function processImportRows(input: {
     const aiRowsById = new Map(aiRows.map((row) => [row.id, row]))
     const cleanedRows = localRows
       .map((row) => aiRowsById.get(row.id) ?? row)
-      .map((row) => enforceGeneratedDescription(row, input.template, input.generateDescription))
+      .map((row) => finalizeCleanedRow(row, localRowsBeforeSpellingById.get(row.id), input.template, {
+        generateDescription: input.generateDescription,
+        correctSpelling: input.correctSpelling,
+        requireBothEmailPhone: input.requireBothEmailPhone,
+      }))
 
     allRows.push(...cleanedRows)
 
@@ -232,6 +258,129 @@ export async function processImportRows(input: {
     modelUsed,
     tokenUsage,
   } satisfies ProcessingResult
+}
+
+type CloudflareCredential = {
+  accountId: string
+  token: string
+}
+
+async function cleanWithCloudflare(input: {
+  credentials: CloudflareCredential[]
+  models: string[]
+  rows: RawImportRow[]
+  template: Template
+  batchNo: number
+  aiRequestBatchSize: number
+  requireBothEmailPhone?: boolean
+  generateDescription?: boolean
+  correctSpelling?: boolean
+  detailedReviewEnabled?: boolean
+}): Promise<{ rows: CleanedRow[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null; aiUsed: boolean }> {
+  if (input.rows.length > input.aiRequestBatchSize) {
+    const allRows: CleanedRow[] = []
+    const totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    let aiUsed = false
+
+    for (const [index, rows] of chunk(input.rows, input.aiRequestBatchSize).entries()) {
+      const result = await cleanWithCloudflare({
+        ...input,
+        rows,
+        batchNo: Number(`${input.batchNo}.${index + 1}`),
+      })
+
+      allRows.push(...result.rows)
+      aiUsed ||= result.aiUsed
+
+      if (result.usage) {
+        totalUsage.prompt_tokens += result.usage.prompt_tokens
+        totalUsage.completion_tokens += result.usage.completion_tokens
+        totalUsage.total_tokens += result.usage.total_tokens
+      }
+    }
+
+    return {
+      rows: allRows,
+      usage: totalUsage.total_tokens > 0 ? totalUsage : null,
+      aiUsed,
+    }
+  }
+
+  const localRows = cleanRowsWithTemplate(input.rows, input.template, {
+    requireBothEmailPhone: input.requireBothEmailPhone,
+    correctSpelling: input.correctSpelling,
+  })
+  const request = buildAiRequestPayload({ ...input, strictJsonOnly: true })
+  const credentials = input.credentials.filter((credential) => credential.accountId && credential.token)
+
+  if (credentials.length === 0) {
+    logger.warn({ batchNo: input.batchNo }, "Cloudflare AI account id or token missing, using local fallback")
+    return { rows: localRows, usage: null, aiUsed: false }
+  }
+
+  const maxAttempts = Math.max(1, credentials.length * input.models.length)
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const credentialIndex = attempt % credentials.length
+    const modelIndex = Math.floor(attempt / credentials.length) % input.models.length
+    const credential = credentials[credentialIndex]
+    const model = input.models[modelIndex]
+    const estimatedPromptTokens = estimateTokenCount(`${request.systemPrompt}\n${request.userPayload}`)
+
+    logger.info({
+      batchNo: input.batchNo,
+      attempt,
+      credentialIndex,
+      model,
+      provider: "Cloudflare Workers AI",
+      promptVersion: EXCEL_CLEANER_PROMPT_VERSION,
+      estimatedPromptTokens,
+      estimatedRows: input.rows.length,
+      payloadPreview: truncate(request.userPayload, 6000),
+    }, "Calling Cloudflare Workers AI")
+
+    try {
+      const result = await requestCloudflareAi({
+        credential,
+        model,
+        systemPrompt: request.systemPrompt,
+        userPayload: request.userPayload,
+        timeoutMs: cloudflareRequestTimeoutMs,
+      })
+      const usage = normalizeGroqUsage(result.usage, request.systemPrompt, request.userPayload, result.content)
+
+      logger.info({
+        batchNo: input.batchNo,
+        attempt,
+        credentialIndex,
+        model,
+        responsePreview: truncate(result.content, 6000),
+        usage,
+      }, "Cloudflare Workers AI response preview")
+
+      if (!result.content) {
+        logger.warn({ batchNo: input.batchNo, attempt, credentialIndex, model }, "Cloudflare Workers AI returned empty content, retrying")
+        continue
+      }
+
+      const parsed = parseGroqRows(result.content, localRows, input.template, {
+        requireBothEmailPhone: input.requireBothEmailPhone,
+        generateDescription: input.generateDescription,
+        detailedReviewEnabled: request.detailedReviewEnabled,
+      })
+
+      if (parsed) {
+        logger.info({ batchNo: input.batchNo, attempt, credentialIndex, model, parsedRows: parsed.length }, "Cloudflare Workers AI response parsed successfully")
+        return { rows: parsed, usage, aiUsed: true }
+      }
+      logger.warn({ batchNo: input.batchNo, attempt, credentialIndex, model, contentPreview: result.content.slice(0, 300) }, "Cloudflare Workers AI returned unparseable JSON")
+    } catch (err) {
+      logger.warn({ batchNo: input.batchNo, attempt, credentialIndex, model, err: err instanceof Error ? { message: err.message, status: (err as any).status } : err }, "Cloudflare Workers AI call failed, retrying")
+    }
+  }
+
+  logger.warn({ batchNo: input.batchNo }, "All Cloudflare Workers AI attempts exhausted, using local fallback")
+  return { rows: localRows, usage: null, aiUsed: false }
 }
 
 function shouldSendToAi(
@@ -728,6 +877,75 @@ type OpenAiCompatibleChatResponse = {
   }
 }
 
+type CloudflareAiResponse = {
+  error?: { message?: string }
+  choices?: Array<{
+    message?: {
+      content?: string
+      reasoning?: string
+    }
+  }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  }
+}
+
+async function requestCloudflareAi(input: {
+  credential: CloudflareCredential
+  model: string
+  systemPrompt: string
+  userPayload: string
+  timeoutMs: number
+}) {
+  const url = new URL(`https://api.cloudflare.com/client/v4/accounts/${input.credential.accountId}/ai/v1/chat/completions`)
+  const body = {
+    model: input.model,
+    messages: [
+      { role: "system", content: input.systemPrompt },
+      { role: "user", content: input.userPayload },
+    ],
+    temperature: 0,
+    max_tokens: maxCompletionTokens,
+  }
+
+  const { response, json } = await postCloudflareAi(url, input.credential.token, body, input.timeoutMs)
+
+  if (!response.ok) {
+    const message = json?.error?.message || `Cloudflare Workers AI failed with HTTP ${response.status}`
+    const error = new Error(message)
+    ;(error as Error & { status?: number }).status = response.status
+    throw error
+  }
+
+  return {
+    content: extractCloudflareContent(json),
+    usage: json.usage ?? null,
+  }
+}
+
+function extractCloudflareContent(payload: CloudflareAiResponse) {
+  const content = payload.choices?.[0]?.message?.content?.trim()
+  if (content) return content
+  return payload.choices?.[0]?.message?.reasoning?.trim() ?? ""
+}
+
+async function postCloudflareAi(url: URL, token: string, body: unknown, timeoutMs: number) {
+  const response = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  }, timeoutMs)
+
+  const json = await response.json().catch(() => ({})) as CloudflareAiResponse
+
+  return { response, json }
+}
+
 async function requestOpenAiCompatibleChat(input: {
   apiKey: string
   baseUrl: string
@@ -990,21 +1208,126 @@ function hasText(value: unknown) {
   return String(value ?? "").trim().length > 0
 }
 
-function enforceGeneratedDescription(row: CleanedRow, template: Template, generateDescription = false) {
-  if (!generateDescription) {
+function finalizeCleanedRow(
+  row: CleanedRow,
+  baselineRow: CleanedRow | undefined,
+  template: Template,
+  options: { generateDescription?: boolean; correctSpelling?: boolean; requireBothEmailPhone?: boolean } = {},
+) {
+  if (row.status === "skipped") {
     return row
   }
 
+  const cleanedData = { ...row.cleaned_data }
+  let changes = [...row.ai_changes]
   const descriptionKey = getDescriptionColumnKey(template)
 
-  if (!descriptionKey || row.status === "skipped" || hasText(row.cleaned_data[descriptionKey])) {
-    return row
+  if (options.generateDescription && descriptionKey && !hasText(cleanedData[descriptionKey])) {
+    const generatedDescription = generateLocalDescription(cleanedData, template)
+
+    if (generatedDescription) {
+      cleanedData[descriptionKey] = generatedDescription
+      changes = addChangeOnce(changes, {
+        field: descriptionKey,
+        before: null,
+        after: generatedDescription,
+        reason: "Generated description from row data.",
+      })
+    }
   }
+
+  if (options.correctSpelling && baselineRow) {
+    for (const column of template.columns_config) {
+      const before = stringifyCell(baselineRow.cleaned_data[column.key])
+      const after = stringifyCell(cleanedData[column.key])
+
+      if (before && after && before !== after && !isContactColumn(column.key, column.label)) {
+        changes = addChangeOnce(changes, {
+          field: column.key,
+          before,
+          after,
+          reason: "Fixed spelling.",
+        })
+      }
+    }
+  }
+
+  const missingFields = getMissingFieldsForTemplate(template, cleanedData, {
+    requireBothEmailPhone: options.requireBothEmailPhone,
+  })
 
   return {
     ...row,
-    ai_changes: row.ai_changes.filter((change) => change.field !== descriptionKey),
+    cleaned_data: cleanedData,
+    status: missingFields.length > 0 ? "missing" as const : "good" as const,
+    missing_fields: missingFields,
+    ai_changes: changes,
   }
+}
+
+function addChangeOnce(changes: CleanedRow["ai_changes"], change: CleanedRow["ai_changes"][number]) {
+  if (changes.some((item) => item.field === change.field && item.after === change.after)) {
+    return changes
+  }
+
+  return [...changes, change]
+}
+
+function stringifyCell(value: unknown) {
+  return String(value ?? "").trim()
+}
+
+function generateLocalDescription(cleanedData: CleanedRow["cleaned_data"], template: Template) {
+  const note = getFieldText(cleanedData, template, ["crm_note", "note", "notes", "remark", "comment", "message"])
+  const source = getFieldText(cleanedData, template, ["source", "data_source", "lead_source"])
+  const possession = getFieldText(cleanedData, template, ["possession", "possesion", "time"])
+  const project = getFieldText(cleanedData, template, ["project", "property"])
+  const city = getFieldText(cleanedData, template, ["city", "location"])
+  const name = getFieldText(cleanedData, template, ["name", "lead_name", "customer"])
+  const contact = getFieldText(cleanedData, template, ["email", "mobile", "phone", "whatsapp"])
+  const parts: string[] = []
+
+  if (note) {
+    parts.push(toSentenceCase(note))
+  } else if (name) {
+    parts.push(`Lead ${name}`)
+  } else if (project) {
+    parts.push(`Interested in ${project}`)
+  } else if (city) {
+    parts.push(`Lead from ${city}`)
+  } else if (contact) {
+    parts.push("Contact available")
+  }
+
+  if (source) {
+    parts.push(`from ${source}`)
+  }
+
+  if (possession) {
+    parts.push(`possession ${possession}`)
+  }
+
+  const description = parts.join(", ").replace(/\s+/g, " ").trim()
+  return description ? truncate(description, 100) : ""
+}
+
+function getFieldText(cleanedData: CleanedRow["cleaned_data"], template: Template, needles: string[]) {
+  for (const column of template.columns_config) {
+    const target = normalizeKey(`${column.key} ${column.label}`)
+
+    if (needles.some((needle) => target.includes(needle))) {
+      const value = stringifyCell(cleanedData[column.key])
+      if (value) return value
+    }
+  }
+
+  return ""
+}
+
+function toSentenceCase(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return ""
+  return trimmed[0].toUpperCase() + trimmed.slice(1)
 }
 
 function normalizeColumnValue(key: string, label: string, value: unknown) {
@@ -1105,6 +1428,7 @@ function isDeterministicFormattingChange(reason: string) {
 
 function normalizeAiProvider(provider: string | null | undefined): AiProvider {
   const normalized = provider?.toLowerCase().replace(/[\s_-]/g, "")
+  if (normalized === "cloudflare" || normalized === "workersai") return "cloudflare"
   return normalized === "commandcode" ? "commandcode" : "groq"
 }
 
@@ -1112,14 +1436,19 @@ function getPrimaryModelForProvider(provider: AiProvider, model: string | null |
   const selectedModel = model?.trim()
 
   if (!selectedModel) {
+    if (provider === "cloudflare") return cloudflareDefaultModel
     return provider === "commandcode" ? commandCodeDefaultModel : groqDefaultModel
+  }
+
+  if (provider === "cloudflare" && !isCloudflareModel(selectedModel)) {
+    return cloudflareDefaultModel
   }
 
   if (provider === "groq" && isCommandCodeModel(selectedModel)) {
     return groqDefaultModel
   }
 
-  if (provider === "commandcode" && isGroqModel(selectedModel)) {
+  if (provider === "commandcode" && (isGroqModel(selectedModel) || isCloudflareModel(selectedModel))) {
     return commandCodeDefaultModel
   }
 
@@ -1146,15 +1475,25 @@ function isGroqModel(model: string) {
   ].some((prefix) => normalized.startsWith(prefix))
 }
 
+function isCloudflareModel(model: string) {
+  return model.toLowerCase().startsWith("@cf/")
+}
+
 function getAiApiKeys(provider: AiProvider, userKey?: string) {
-  const providerKeys = provider === "commandcode"
+  const providerKeys = provider === "cloudflare"
     ? [
-        process.env.COMMAND_CODE_API_KEY,
-        process.env.COMMANDCODE_API_KEY,
+        process.env.CLOUDFLARE_API,
+        process.env.CLOUDFLARE_API_TOKEN,
+        process.env.CLOUDFLARE_API_KEY,
       ]
-    : [
-        process.env.GROQ_API_KEY,
-      ]
+    : provider === "commandcode"
+      ? [
+          process.env.COMMAND_CODE_API_KEY,
+          process.env.COMMANDCODE_API_KEY,
+        ]
+      : [
+          process.env.GROQ_API_KEY,
+        ]
 
   return unique([userKey, ...providerKeys]
     .map((key) => key?.trim())
@@ -1162,11 +1501,44 @@ function getAiApiKeys(provider: AiProvider, userKey?: string) {
 }
 
 function getAiModels(provider: AiProvider, model: string) {
+  if (provider === "cloudflare") {
+    return unique([model].filter(Boolean))
+  }
+
   if (provider === "commandcode") {
     return unique([model, commandCodeFallbackModel].filter(Boolean))
   }
 
   return unique([model, fallbackModel].filter(Boolean))
+}
+
+function parseCloudflareCredential(raw: string): CloudflareCredential | null {
+  const trimmed = raw.trim()
+  const defaultAccountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || process.env.CLOUDFLARE_ACCOUNT?.trim() || process.env.CF_ACCOUNT_ID?.trim() || ""
+
+  if (!trimmed) {
+    return null
+  }
+
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as { accountId?: string; account_id?: string; token?: string; key?: string }
+      const accountId = parsed.accountId?.trim() || parsed.account_id?.trim() || defaultAccountId
+      const token = parsed.token?.trim() || parsed.key?.trim() || ""
+      return accountId && token ? { accountId, token } : null
+    } catch {
+      return defaultAccountId ? { accountId: defaultAccountId, token: trimmed } : null
+    }
+  }
+
+  const separatorIndex = trimmed.indexOf(":")
+  if (separatorIndex > 0) {
+    const accountId = trimmed.slice(0, separatorIndex).trim()
+    const token = trimmed.slice(separatorIndex + 1).trim()
+    return accountId && token ? { accountId, token } : null
+  }
+
+  return defaultAccountId ? { accountId: defaultAccountId, token: trimmed } : null
 }
 
 function readNumberEnv(name: string, defaultValue: number, bounds: { min: number; max: number }) {

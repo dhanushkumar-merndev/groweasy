@@ -173,10 +173,6 @@ export function ValidateClient({
       await delay(450)
       if (cancelled) return
 
-      setStepIdx(4)
-      await delay(260)
-      if (cancelled) return
-
       saveValidateSession(importId, {
         phase: "done",
         questionStep: templateName === "Grow Easy CRM" ? 4 : 3,
@@ -438,6 +434,7 @@ function QuestionOption({
           type="button"
           variant={checked === true ? "default" : "ghost"}
           size="sm"
+          autoLoading={false}
           onClick={() => onCheckedChange?.(true)}
           className={cn(
             "h-6 min-w-10 rounded-md px-2.5 text-xs transition-all duration-300",
@@ -451,6 +448,7 @@ function QuestionOption({
           type="button"
           variant={checked === false ? "default" : "ghost"}
           size="sm"
+          autoLoading={false}
           onClick={() => onCheckedChange?.(false)}
           className={cn(
             "h-6 min-w-10 rounded-md px-2.5 text-xs transition-all duration-300",

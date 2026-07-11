@@ -1,3 +1,5 @@
+import { scopeStorageKey } from "@/lib/user-storage-scope"
+
 const DB_NAME = "groweasy-store"
 const DB_VERSION = 1
 const STORE_NAME = "local-imports"
@@ -18,10 +20,11 @@ function openDB(): Promise<IDBDatabase> {
 
 export async function idbGet<T>(key: string): Promise<T | null> {
   try {
+    const scopedKey = scopeStorageKey(key)
     const db = await openDB()
     return new Promise((resolve) => {
       const tx = db.transaction(STORE_NAME, "readonly")
-      const req = tx.objectStore(STORE_NAME).get(key)
+      const req = tx.objectStore(STORE_NAME).get(scopedKey)
       req.onsuccess = () => {
         const envelope = req.result as Envelope<T> | undefined
         if (!envelope) return resolve(null)
@@ -73,11 +76,12 @@ export async function purgeExpired(): Promise<number> {
 
 export async function idbSet<T>(key: string, value: T, ttlMs = DEFAULT_TTL_MS): Promise<boolean> {
   try {
+    const scopedKey = scopeStorageKey(key)
     const db = await openDB()
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite")
       const envelope: Envelope<T> = { data: value, expiresAt: Date.now() + ttlMs }
-      tx.objectStore(STORE_NAME).put(envelope, key)
+      tx.objectStore(STORE_NAME).put(envelope, scopedKey)
       tx.oncomplete = () => {
         db.close()
         resolve(true)
@@ -91,9 +95,10 @@ export async function idbSet<T>(key: string, value: T, ttlMs = DEFAULT_TTL_MS): 
 
 export async function idbDelete(key: string): Promise<void> {
   try {
+    const scopedKey = scopeStorageKey(key)
     const db = await openDB()
     const tx = db.transaction(STORE_NAME, "readwrite")
-    tx.objectStore(STORE_NAME).delete(key)
+    tx.objectStore(STORE_NAME).delete(scopedKey)
     tx.oncomplete = () => db.close()
   } catch {
     // ignore
