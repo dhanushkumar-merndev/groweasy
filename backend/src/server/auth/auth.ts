@@ -9,6 +9,7 @@ const databaseUrl = process.env.DATABASE_URL
 const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000"
 const authUrl = process.env.BETTER_AUTH_URL ?? frontendUrl
 const trustedOrigins = [
+  authUrl,
   frontendUrl,
   "http://localhost:3000",
   "http://127.0.0.1:3000",
