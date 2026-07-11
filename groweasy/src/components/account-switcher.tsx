@@ -39,7 +39,6 @@ import {
   SidebarMenu,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { API_BASE } from "@/lib/api-client"
 import type { CurrentUser } from "@/lib/auth-types"
 import { cn } from "@/lib/utils"
 
@@ -123,7 +122,7 @@ function buildRows(user: CurrentUser, sessions: DeviceSession[]): SessionRow[] {
 }
 
 async function fetchDeviceSessions() {
-  const response = await fetch(`${API_BASE}/api/auth/multi-session/list-device-sessions`, {
+  const response = await fetch(`/api/auth/multi-session/list-device-sessions`, {
     credentials: "include",
   })
 
@@ -196,7 +195,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
     setPendingToken(row.token)
 
     try {
-      const response = await fetch(`${API_BASE}/api/auth/multi-session/set-active`, {
+      const response = await fetch(`/api/auth/multi-session/set-active`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionToken: row.token }),
@@ -224,7 +223,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
     setAdding(true)
 
     try {
-      const response = await fetch(`${API_BASE}/api/auth/sign-in/social`, {
+      const response = await fetch(`/api/auth/sign-in/social`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -254,7 +253,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
       const hasNextSession = deviceSessions.some((item) => item.user.id !== user.id)
 
       if (currentSession?.session.token && hasNextSession) {
-        const revokeResponse = await fetch(`${API_BASE}/api/auth/multi-session/revoke`, {
+        const revokeResponse = await fetch(`/api/auth/multi-session/revoke`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionToken: currentSession.session.token }),
@@ -267,7 +266,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
         }
       }
 
-      const res = await fetch(`${API_BASE}/api/auth/sign-out`, {
+      const res = await fetch(`/api/auth/sign-out`, {
         method: "POST",
         credentials: "include",
       })
@@ -285,7 +284,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
       const deviceSessions = await fetchDeviceSessions()
       for (const item of deviceSessions) {
         if (item.session.token) {
-          await fetch(`${API_BASE}/api/auth/multi-session/revoke`, {
+          await fetch(`/api/auth/multi-session/revoke`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sessionToken: item.session.token }),
@@ -298,7 +297,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
     }
 
     try {
-      await fetch(`${API_BASE}/api/auth/sign-out`, {
+      await fetch(`/api/auth/sign-out`, {
         method: "POST",
         credentials: "include",
       })

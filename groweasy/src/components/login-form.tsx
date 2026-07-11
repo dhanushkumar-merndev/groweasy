@@ -4,7 +4,6 @@ import { useTransition } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { GoogleIcon } from "@/components/icons/google-icon"
-import { API_BASE } from "@/lib/api-client"
 import { cn } from "@/lib/utils"
 import { FileSpreadsheetIcon, ShieldAlertIcon } from "lucide-react"
 
@@ -18,7 +17,7 @@ export function LoginForm({
   async function signInWithGoogle() {
     startTransition(async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/auth/sign-in/social`, {
+        const response = await fetch(`/api/auth/sign-in/social`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
