@@ -82,7 +82,11 @@ export function TemplateForm({ template }: { template?: Template }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name,
-            columns_config: columns.map(({ _uid: _, ...col }) => col),
+            columns_config: columns.map((column) => {
+              const { _uid, ...col } = column
+              void _uid
+              return col
+            }),
             formatting_rules: {},
           }),
         })

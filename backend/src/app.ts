@@ -17,11 +17,18 @@ import { logger } from "./lib/logger.js"
 
 const app = express()
 const configuredFrontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000"
+const allowedOrigins = new Set(
+  configuredFrontendUrl
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+)
+const allowLocalhostOrigins = process.env.NODE_ENV !== "production"
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || origin === configuredFrontendUrl || /^http:\/\/localhost:\d+$/.test(origin)) {
+      if (!origin || allowedOrigins.has(origin) || (allowLocalhostOrigins && /^http:\/\/localhost:\d+$/.test(origin))) {
         callback(null, true)
         return
       }
@@ -32,6 +39,14 @@ app.use(
     credentials: true,
   })
 )
+
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff")
+  res.setHeader("X-Frame-Options", "DENY")
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin")
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+  next()
+})
 
 app.use((req, _res, next) => {
   logger.info({ method: req.method, url: req.url, origin: req.headers.origin }, "Incoming request")

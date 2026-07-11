@@ -89,11 +89,15 @@ export function ApiKeyManager() {
   }
 
   useEffect(() => {
-    loadApiKeySettings()
-      .catch(() => {
-        toast.error("Unable to load API key settings")
-      })
-      .finally(() => setLoading(false))
+    const timer = window.setTimeout(() => {
+      loadApiKeySettings()
+        .catch(() => {
+          toast.error("Unable to load API key settings")
+        })
+        .finally(() => setLoading(false))
+    }, 0)
+
+    return () => window.clearTimeout(timer)
   }, [])
 
   function refreshSettingsPanels() {

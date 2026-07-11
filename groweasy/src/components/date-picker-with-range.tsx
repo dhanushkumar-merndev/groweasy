@@ -24,10 +24,6 @@ export function DatePickerWithRange({
   const [desktop, setDesktop] = useState(false)
 
   useEffect(() => {
-    if (open) setPendingRange(value)
-  }, [open, value])
-
-  useEffect(() => {
     const query = window.matchMedia("(min-width: 768px)")
     const update = () => setDesktop(query.matches)
     update()
@@ -45,7 +41,16 @@ export function DatePickerWithRange({
 
   return (
     <div className={cn("grid gap-2", className)}>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (nextOpen) {
+            setPendingRange(value)
+          }
+
+          setOpen(nextOpen)
+        }}
+      >
         <PopoverTrigger asChild>
           <Button
             variant="outline"

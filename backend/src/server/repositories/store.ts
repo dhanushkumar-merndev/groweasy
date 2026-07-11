@@ -46,7 +46,7 @@ type StoreState = {
 }
 
 const storeFilePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.data/store-state.json")
-const localStorePersistEnabled = process.env.LOCAL_STORE_PERSIST !== "false"
+const localStorePersistEnabled = process.env.NODE_ENV !== "production" && process.env.LOCAL_STORE_PERSIST !== "false"
 
 function defaultState(): StoreState {
   return {
@@ -157,6 +157,7 @@ async function syncSavedRowsToSupabase(userId: string, importId: string, savedRo
     const { error: deleteError } = await supabase
       .from("saved_rows")
       .delete()
+      .eq("user_id", userId)
       .eq("import_id", importId)
 
     if (deleteError) {
@@ -191,6 +192,55 @@ async function syncSavedRowsToSupabase(userId: string, importId: string, savedRo
     logger.info({ importId, savedCount: savedRows.length }, "Saved rows synced to Supabase")
   } catch (error) {
     logger.error({ error, importId, savedCount: savedRows.length }, "Failed to sync saved rows to Supabase")
+    throw error
+  }
+}
+
+async function updateSavedRowInSupabase(
+  userId: string,
+  importId: string,
+  rowId: string,
+  cleanedData: RowData,
+  updatedAt: string,
+) {
+  const supabase = getSupabaseServiceClient()
+
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase
+    .from("saved_rows")
+    .update({
+      cleaned_data: cleanedData,
+      updated_at: updatedAt,
+    })
+    .eq("id", rowId)
+    .eq("user_id", userId)
+    .eq("import_id", importId)
+
+  if (error) {
+    logger.error({ error, userId, importId, rowId }, "Failed to update saved row in Supabase")
+    throw error
+  }
+}
+
+async function deleteSavedRowFromSupabase(userId: string, importId: string, rowId: string) {
+  const supabase = getSupabaseServiceClient()
+
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase
+    .from("saved_rows")
+    .delete()
+    .eq("id", rowId)
+    .eq("user_id", userId)
+    .eq("import_id", importId)
+
+  if (error) {
+    logger.error({ error, userId, importId, rowId }, "Failed to delete saved row from Supabase")
     throw error
   }
 }
@@ -717,7 +767,7 @@ export const store = {
       ...patch,
       updated_at: new Date().toISOString(),
     }
-    state.imports = state.imports.map((job) => (job.id === id ? updated : job))
+    state.imports = state.imports.map((job) => (job.id === id && job.user_id === existing.user_id ? updated : job))
 
     logger.debug({ userId, importId: id, patchKeys: Object.keys(patch) }, "Import updated")
     persistState()
@@ -841,11 +891,11 @@ export const store = {
     return row
   },
 
-  updateSavedRow(userId: string, rowId: string, cleanedData: RowData) {
-    const existing = state.savedRows.find((row) => row.id === rowId && row.user_id === userId)
+  async updateSavedRow(userId: string, importId: string, rowId: string, cleanedData: RowData) {
+    const existing = state.savedRows.find((row) => row.id === rowId && row.user_id === userId && row.import_id === importId)
 
     if (!existing) {
-      logger.warn({ userId, rowId }, "Saved row not found for update")
+      logger.warn({ userId, importId, rowId }, "Saved row not found for update")
       return null
     }
 
@@ -854,26 +904,32 @@ export const store = {
       cleaned_data: cleanedData,
       updated_at: new Date().toISOString(),
     }
-    logger.info({ userId, rowId, importId: existing.import_id }, "Updated saved row")
-    state.savedRows = state.savedRows.map((row) => (row.id === rowId ? updated : row))
+    logger.info({ userId, rowId, importId }, "Updated saved row")
+    state.savedRows = state.savedRows.map((row) =>
+      row.id === rowId && row.user_id === userId && row.import_id === importId ? updated : row
+    )
     persistState()
-    void invalidateAnalyticsCache(existing.import_id)
+    await updateSavedRowInSupabase(userId, importId, rowId, cleanedData, updated.updated_at)
+    void invalidateAnalyticsCache(importId)
 
     return updated
   },
 
-  deleteSavedRow(userId: string, rowId: string) {
-    const existing = state.savedRows.find((row) => row.id === rowId && row.user_id === userId)
+  async deleteSavedRow(userId: string, importId: string, rowId: string) {
+    const existing = state.savedRows.find((row) => row.id === rowId && row.user_id === userId && row.import_id === importId)
 
     if (!existing) {
-      logger.warn({ userId, rowId }, "Saved row not found for deletion")
+      logger.warn({ userId, importId, rowId }, "Saved row not found for deletion")
       return false
     }
 
-    logger.info({ userId, rowId, importId: existing.import_id }, "Deleted saved row")
-    state.savedRows = state.savedRows.filter((row) => row.id !== rowId)
+    logger.info({ userId, rowId, importId }, "Deleted saved row")
+    state.savedRows = state.savedRows.filter(
+      (row) => !(row.id === rowId && row.user_id === userId && row.import_id === importId)
+    )
     persistState()
-    void invalidateAnalyticsCache(existing.import_id)
+    await deleteSavedRowFromSupabase(userId, importId, rowId)
+    void invalidateAnalyticsCache(importId)
 
     return true
   },

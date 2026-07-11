@@ -38,8 +38,15 @@ export type ParsedRawUpload = {
 
 const CSV_SHEET_NAME = "CSV Upload"
 const SUPPORTED_EXCEL_EXTENSIONS = [".xlsx", ".xls"]
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+const FORMULA_LIKE_RE = /^([=+@]|-[A-Za-z(])/
+const SAFE_PLUS_NUMBER_RE = /^\+\d[\d\s().-]*$/
 
 export async function parseFileToRawRows(file: File): Promise<ParsedRawUpload> {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error("Upload files up to 10 MB so the browser can parse them safely.")
+  }
+
   const fileName = file.name.toLowerCase()
 
   if (fileName.endsWith(".csv")) {
@@ -143,12 +150,12 @@ function rowsFromMatrix(matrix: string[][], sourceSheet: string, sourceSheetInde
   const headers = normalizeHeaders(headerRow)
   const dataRows = dropTrailingEmptyRows(matrix.slice(1))
 
-	  return dataRows.map((row, rowIndex) => ({
-	    source_sheet: sourceSheet,
-	    source_sheet_index: sourceSheetIndex,
-	    source_row_index: rowIndex + 1,
-	    data: rowDataFromCells(headers, row),
-	  }))
+  return dataRows.map((row, rowIndex) => ({
+    source_sheet: sourceSheet,
+    source_sheet_index: sourceSheetIndex,
+    source_row_index: rowIndex + 1,
+    data: rowDataFromCells(headers, row),
+  }))
 }
 
 function rowDataFromCells(headers: string[], cells: string[]) {
@@ -205,7 +212,13 @@ function cellToString(value: unknown) {
     return cellToString(value.v)
   }
 
-  return String(value)
+  const compact = String(value).replace(/\s+/g, " ").trim()
+
+  if (FORMULA_LIKE_RE.test(compact) && !SAFE_PLUS_NUMBER_RE.test(compact)) {
+    return `'${compact}`
+  }
+
+  return compact
 }
 
 function toRawBatchColumn(column: TemplateColumn): RawBatchTemplateColumn {

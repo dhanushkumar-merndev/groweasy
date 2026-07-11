@@ -63,7 +63,9 @@ function Button({
   const isLoading = Boolean(loading || pressedLoading)
 
   React.useEffect(() => {
-    setPressedLoading(false)
+    const timer = setTimeout(() => setPressedLoading(false), 0)
+
+    return () => clearTimeout(timer)
   }, [pathname])
 
   React.useEffect(() => {

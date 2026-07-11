@@ -88,7 +88,7 @@ router.patch("/:importId/rows/:rowId", async (req, res) => {
     }
 
     const body = parseJsonBody(req.body, savedRowPatchSchema)
-    const row = store.updateSavedRow(user.id, rowId, body.cleaned_data)
+    const row = await store.updateSavedRow(user.id, importId, rowId, body.cleaned_data)
 
     if (!row) {
       return jsonError(res, "ROW_NOT_FOUND", "Saved row not found.", 404)
@@ -111,7 +111,7 @@ router.delete("/:importId/rows/:rowId", async (req, res) => {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
-    const deleted = store.deleteSavedRow(user.id, rowId)
+    const deleted = await store.deleteSavedRow(user.id, importId, rowId)
 
     if (!deleted) {
       return jsonError(res, "ROW_NOT_FOUND", "Saved row not found.", 404)

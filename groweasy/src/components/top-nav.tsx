@@ -1,4 +1,4 @@
-export function TopNav({ isDemo: _isDemo }: { isDemo: boolean }) {
+export function TopNav({}: { isDemo: boolean }) {
   return (
     <div>
       <p className="text-sm text-muted-foreground">AI Excel Cleaner & Analytics Platform</p>

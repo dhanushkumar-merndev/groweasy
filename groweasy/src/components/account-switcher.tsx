@@ -140,6 +140,8 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
   const [loading, setLoading] = React.useState(true)
   const [pendingToken, setPendingToken] = React.useState<string | null>(null)
   const [adding, setAdding] = React.useState(false)
+  const [loggingOutAll, setLoggingOutAll] = React.useState(false)
+  const [confirmLogoutAll, setConfirmLogoutAll] = React.useState(false)
 
   const rows = React.useMemo(() => buildRows(user, sessions), [sessions, user])
   const userAvatarSrc = getAvatarSrc(user.image)
@@ -149,6 +151,10 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !user.isDemo) {
       setLoading(true)
+    }
+
+    if (!nextOpen) {
+      setConfirmLogoutAll(false)
     }
 
     setOpen(nextOpen)
@@ -273,6 +279,8 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
   }
 
   async function logoutAll() {
+    setLoggingOutAll(true)
+
     try {
       const deviceSessions = await fetchDeviceSessions()
       for (const item of deviceSessions) {
@@ -439,26 +447,56 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
                 })}
           </div>
 
-          <div className="flex gap-2">
+          {confirmLogoutAll && (
+            <div className="grid gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+              <div className="grid gap-1">
+                <p className="text-sm font-medium text-foreground">Log out all accounts?</p>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  This will remove every signed-in Google account from this device.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={loggingOutAll}
+                  onClick={() => setConfirmLogoutAll(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={loggingOutAll}
+                  onClick={() => void logoutAll()}
+                >
+                  {loggingOutAll ? <Loader2Icon className="size-4 animate-spin" /> : <LogOutIcon className="size-4" />}
+                  Yes, log out
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="grid gap-2">
+            <Button
+              type="button"
+              variant="destructive"
+              className="justify-center"
+              disabled={user.isDemo || rows.length <= 1 || loggingOutAll}
+              onClick={() => setConfirmLogoutAll(true)}
+            >
+              <LogOutIcon className="size-4" />
+              Log out all accounts
+            </Button>
             <Button
               type="button"
               variant="outline"
-              className="flex-1 justify-center"
-              disabled={user.isDemo || adding || sessionLimitReached}
+              className="justify-center"
+              disabled={user.isDemo || adding || sessionLimitReached || loggingOutAll}
               onClick={() => void addAccount()}
             >
               {adding ? <Loader2Icon className="size-4 animate-spin" /> : <PlusIcon className="size-4" />}
               {sessionLimitReached ? "5 accounts added" : "Add account"}
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="icon"
-              disabled={user.isDemo || rows.length <= 1}
-              onClick={() => void logoutAll()}
-              title="Logout all accounts"
-            >
-              <LogOutIcon className="size-4" />
             </Button>
           </div>
         </DialogContent>

@@ -29,8 +29,6 @@ import {
 import type { CurrentUser } from "@/lib/auth-types"
 import { AccountSwitcher } from "@/components/account-switcher"
 
-import { cn } from "@/lib/utils"
-
 const primaryNav = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboardIcon },
   { title: "Upload", url: "/upload", icon: UploadCloudIcon },
@@ -51,10 +49,6 @@ export function AppSidebar({
   user?: CurrentUser
 }) {
   const pathname = usePathname()
-  
-  const activeIndex = primaryNav.findIndex(
-    (item) => pathname === item.url || pathname.startsWith(`${item.url}/`)
-  )
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>

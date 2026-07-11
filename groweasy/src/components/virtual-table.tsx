@@ -13,8 +13,8 @@ import type { SavedRow, Template } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const PAGE_SIZE = 50
-const META_COLUMNS = "minmax(118px,118px) minmax(64px,64px)"
-const COMPACT_META_COLUMNS = "minmax(74px,0.7fr) minmax(44px,0.35fr)"
+const META_COLUMNS = "minmax(118px,118px) minmax(64px,64px) minmax(92px,92px)"
+const COMPACT_META_COLUMNS = "minmax(74px,0.7fr) minmax(44px,0.35fr) minmax(74px,0.55fr)"
 const CLEANED_COLUMN_WIDTHS: Record<string, string> = {
   created_at: "minmax(140px,140px)",
   name: "minmax(200px,200px)",
@@ -230,6 +230,7 @@ export function VirtualTable({
             >
               <GridCell head>Sheet</GridCell>
               <GridCell head>Row</GridCell>
+              <GridCell head>Save</GridCell>
               {columns.map((column) => (
                 <GridCell key={column.key} head>
                   {column.label}
@@ -253,6 +254,17 @@ export function VirtualTable({
                 >
                   <GridCell title={row.sheet_name}>{row.sheet_name}</GridCell>
                   <GridCell>{row.row_index}</GridCell>
+                  <GridCell>
+                    <Button
+                      size="xs"
+                      variant={dirtyRows[row.id] ? "default" : "outline"}
+                      loading={savingRows[row.id]}
+                      disabled={!dirtyRows[row.id]}
+                      onClick={() => void saveRow(row)}
+                    >
+                      Save
+                    </Button>
+                  </GridCell>
                   {columns.map((column) => (
                     <GridCell key={column.key}>
                       <EditableCell
