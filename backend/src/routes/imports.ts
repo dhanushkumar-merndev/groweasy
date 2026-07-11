@@ -15,11 +15,13 @@ import { exportRowsToGoogleSheet } from "../server/google/sheets.js"
 import { getUserAiSettings, hasActiveUserApiKey } from "./settings.js"
 import { logger } from "../lib/logger.js"
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
 const router = Router()
 
-const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".tsv", ".ods"]
+const ALLOWED_EXTENSIONS = [".xlsx", ".csv", ".tsv"]
 const DEFAULT_API_ROW_LIMIT = 10
+const maxConcurrentAiImports = readNumberEnv("AI_MAX_CONCURRENT_IMPORTS", 3, { min: 1, max: 10 })
+const activeAiImports = new Set<string>()
 
 router.get("/", async (req, res) => {
   try {
@@ -37,12 +39,12 @@ router.post("/", upload.single("file"), async (req, res) => {
 
     if (!req.file) {
       logger.warn({ userId: user.id }, "Upload attempted without file")
-      return jsonError(res, "INVALID_FILE", "Upload an Excel, CSV, TSV, or ODS file.", 400)
+      return jsonError(res, "INVALID_FILE", "Upload an XLSX, CSV, or TSV file.", 400)
     }
 
     if (!ALLOWED_EXTENSIONS.some((ext) => req.file!.originalname.toLowerCase().endsWith(ext))) {
       logger.warn({ userId: user.id, filename: req.file!.originalname }, "Unsupported file type")
-      return jsonError(res, "INVALID_FILE_TYPE", "Supported file types are .xlsx, .xls, .csv, .tsv, and .ods.", 400)
+      return jsonError(res, "INVALID_FILE_TYPE", "Supported file types are .xlsx, .csv, and .tsv.", 400)
     }
 
     const options = uploadOptionsSchema.parse({
@@ -60,8 +62,9 @@ router.post("/", upload.single("file"), async (req, res) => {
 
     const importId = crypto.randomUUID()
     logger.info({ userId: user.id, importId, filename: req.file!.originalname, templateId: template.id }, "File upload started")
-    const validation = parseWorkbook(new Uint8Array(req.file!.buffer).buffer as ArrayBuffer, {
+    const validation = await parseWorkbook(new Uint8Array(req.file!.buffer).buffer as ArrayBuffer, {
       importId,
+      fileName: req.file!.originalname,
       removeBlankRows: options.remove_blank_rows,
       dashValuesBlank: options.dash_values_blank,
     })
@@ -417,17 +420,29 @@ router.post("/:id/process", async (req, res) => {
       await invalidateProcessedImportCache(id)
     }
 
-    store.setStatus(user.id, id, "processing")
-    const result = await processImportRows({
-      userId: user.id,
-      importId: id,
-      template,
-      rows,
-      sheets: store.listSheets(id),
-      requireBothEmailPhone: validation?.require_both_email_phone ?? false,
-      generateDescription: validation?.generate_description ?? false,
-      correctSpelling: validation?.correct_spelling ?? false,
-    })
+    const releaseAiSlot = tryAcquireAiSlot(id)
+
+    if (!releaseAiSlot) {
+      return jsonError(res, "AI_BUSY", "AI processing is busy. Please retry in a minute.", 429)
+    }
+
+    let result: Awaited<ReturnType<typeof processImportRows>>
+    try {
+      store.setStatus(user.id, id, "processing")
+      result = await processImportRows({
+        userId: user.id,
+        importId: id,
+        template,
+        rows,
+        sheets: store.listSheets(id),
+        requireBothEmailPhone: validation?.require_both_email_phone ?? false,
+        generateDescription: validation?.generate_description ?? false,
+        correctSpelling: validation?.correct_spelling ?? false,
+      })
+    } finally {
+      releaseAiSlot()
+    }
+
     await store.addTemplateSourceHints(user.id, template.id, learnTemplateSourceHints({
       template,
       rawRows: rows,
@@ -474,6 +489,12 @@ router.get("/:id/stream", async (req, res) => {
       await invalidateProcessedImportCache(id)
     }
 
+    const releaseAiSlot = tryAcquireAiSlot(id)
+
+    if (!releaseAiSlot) {
+      return jsonError(res, "AI_BUSY", "AI processing is busy. Please retry in a minute.", 429)
+    }
+
     const aiSettings = await getUserAiSettings(user.id)
     const totalBatches = Math.max(1, Math.ceil(rows.length / aiSettings.batchSize))
     const totalRows = rows.length
@@ -505,76 +526,81 @@ router.get("/:id/stream", async (req, res) => {
 
     logger.info({ importId: id, totalBatches }, "Starting SSE stream")
 
-    const result = await processImportRows({
-      userId: user.id,
-      importId: id,
-      template,
-      rows,
-      sheets: store.listSheets(id),
-      requireBothEmailPhone: validation?.require_both_email_phone ?? false,
-      generateDescription: validation?.generate_description ?? false,
-      correctSpelling: validation?.correct_spelling ?? false,
-      onBatchStart: async ({ batchNo, batchRows, aiRows, model }) => {
-        if (closed) return
+    let result: Awaited<ReturnType<typeof processImportRows>>
+    try {
+      result = await processImportRows({
+        userId: user.id,
+        importId: id,
+        template,
+        rows,
+        sheets: store.listSheets(id),
+        requireBothEmailPhone: validation?.require_both_email_phone ?? false,
+        generateDescription: validation?.generate_description ?? false,
+        correctSpelling: validation?.correct_spelling ?? false,
+        onBatchStart: async ({ batchNo, batchRows, aiRows, model }) => {
+          if (closed) return
 
-        writeSse(res, {
-          type: "batch_started",
-          batch_no: batchNo,
-          total_batches: totalBatches,
-          batch_rows: batchRows,
-          ai_rows: aiRows,
-          model,
-        })
-      },
-      onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage, aiRows, aiUsed }) => {
-        if (closed) return
-
-        goodCount += batch.summary.good_count
-        missingCount += batch.summary.missing_count
-        skippedCount += batch.summary.skipped_count
-        aiChangedCount += batch.summary.ai_changed_count
-
-        writeSse(res, {
-          type: "batch_completed",
-          batch_no: batchNo,
-          total_batches: totalBatches,
-          good_count: goodCount,
-          missing_count: missingCount,
-          skipped_count: skippedCount,
-          ai_changed_count: aiChangedCount,
-          batch_good_count: batch.summary.good_count,
-          batch_missing_count: batch.summary.missing_count,
-          batch_skipped_count: batch.summary.skipped_count,
-          batch_ai_changed_count: batch.summary.ai_changed_count,
-          batch_output_rows: batch.rows.length,
-          ai_rows: aiRows,
-          ai_used: aiUsed,
-          batch_token_usage: {
-            prompt_tokens: Math.max(0, tokenUsage.prompt_tokens - previousPromptTokens),
-            completion_tokens: Math.max(0, tokenUsage.completion_tokens - previousCompletionTokens),
-            total_tokens: Math.max(0, tokenUsage.total_tokens - previousTotalTokens),
-          },
-        })
-
-        previousPromptTokens = tokenUsage.prompt_tokens
-        previousCompletionTokens = tokenUsage.completion_tokens
-        previousTotalTokens = tokenUsage.total_tokens
-
-        writeSse(res, {
-          type: "progress",
-          processed_rows: processedRows,
-          total_rows: totalRows,
-          percent: totalRows > 0 ? Math.round((processedRows / totalRows) * 100) : 100,
-        })
-
-        if (tokenUsage.total_tokens > 0) {
           writeSse(res, {
-            type: "token_usage",
-            token_usage: tokenUsage,
+            type: "batch_started",
+            batch_no: batchNo,
+            total_batches: totalBatches,
+            batch_rows: batchRows,
+            ai_rows: aiRows,
+            model,
           })
-        }
-      },
-    })
+        },
+        onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage, aiRows, aiUsed }) => {
+          if (closed) return
+
+          goodCount += batch.summary.good_count
+          missingCount += batch.summary.missing_count
+          skippedCount += batch.summary.skipped_count
+          aiChangedCount += batch.summary.ai_changed_count
+
+          writeSse(res, {
+            type: "batch_completed",
+            batch_no: batchNo,
+            total_batches: totalBatches,
+            good_count: goodCount,
+            missing_count: missingCount,
+            skipped_count: skippedCount,
+            ai_changed_count: aiChangedCount,
+            batch_good_count: batch.summary.good_count,
+            batch_missing_count: batch.summary.missing_count,
+            batch_skipped_count: batch.summary.skipped_count,
+            batch_ai_changed_count: batch.summary.ai_changed_count,
+            batch_output_rows: batch.rows.length,
+            ai_rows: aiRows,
+            ai_used: aiUsed,
+            batch_token_usage: {
+              prompt_tokens: Math.max(0, tokenUsage.prompt_tokens - previousPromptTokens),
+              completion_tokens: Math.max(0, tokenUsage.completion_tokens - previousCompletionTokens),
+              total_tokens: Math.max(0, tokenUsage.total_tokens - previousTotalTokens),
+            },
+          })
+
+          previousPromptTokens = tokenUsage.prompt_tokens
+          previousCompletionTokens = tokenUsage.completion_tokens
+          previousTotalTokens = tokenUsage.total_tokens
+
+          writeSse(res, {
+            type: "progress",
+            processed_rows: processedRows,
+            total_rows: totalRows,
+            percent: totalRows > 0 ? Math.round((processedRows / totalRows) * 100) : 100,
+          })
+
+          if (tokenUsage.total_tokens > 0) {
+            writeSse(res, {
+              type: "token_usage",
+              token_usage: tokenUsage,
+            })
+          }
+        },
+      })
+    } finally {
+      releaseAiSlot()
+    }
     await store.addTemplateSourceHints(user.id, template.id, learnTemplateSourceHints({
       template,
       rawRows: rows,
@@ -611,6 +637,35 @@ router.get("/:id/stream", async (req, res) => {
 function writeSse(res: Response, payload: unknown) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`)
   ;(res as Response & { flush?: () => void }).flush?.()
+}
+
+function tryAcquireAiSlot(importId: string) {
+  if (activeAiImports.has(importId)) {
+    return null
+  }
+
+  if (activeAiImports.size >= maxConcurrentAiImports) {
+    logger.warn({ importId, active: activeAiImports.size, max: maxConcurrentAiImports }, "AI processing concurrency limit reached")
+    return null
+  }
+
+  activeAiImports.add(importId)
+  logger.info({ importId, active: activeAiImports.size, max: maxConcurrentAiImports }, "AI processing slot acquired")
+
+  return () => {
+    activeAiImports.delete(importId)
+    logger.info({ importId, active: activeAiImports.size, max: maxConcurrentAiImports }, "AI processing slot released")
+  }
+}
+
+function readNumberEnv(name: string, fallback: number, bounds: { min: number; max: number }) {
+  const parsed = Number(process.env[name])
+
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+
+  return Math.min(Math.max(Math.trunc(parsed), bounds.min), bounds.max)
 }
 
 router.get("/:id/results", async (req, res) => {
@@ -701,7 +756,7 @@ router.post("/:id/export/excel", async (req, res) => {
         : true
     )
     logger.info({ importId: id, mode: body.mode, rowCount: rows.length }, "Exporting to Excel")
-    const buffer = buildExcelExport({
+    const buffer = await buildExcelExport({
       rows,
       template,
       mode: body.mode,

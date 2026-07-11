@@ -11,6 +11,10 @@ const server = app.listen(port, () => {
   logger.info({ paths: ["/api/clean-batch", "/api/imports", "/api/templates", "/api/tables", "/api/analytics", "/api/google-sheets"] }, "API routes mounted")
 })
 
+server.requestTimeout = 0
+server.headersTimeout = 65_000
+server.keepAliveTimeout = 65_000
+
 server.on("error", (error: NodeJS.ErrnoException) => {
   if (error.code === "EADDRINUSE") {
     logger.error({ port }, "Port already in use. Stop the existing backend process or change PORT in backend/.env.")

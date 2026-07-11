@@ -1,15 +1,19 @@
-import * as XLSX from "xlsx"
+import ExcelJS from "exceljs"
 
-import type { SavedRow, Template } from "../../lib/types.js"
+import type { CellValue, SavedRow, Template } from "../../lib/types.js"
 import { logger } from "../../lib/logger.js"
 
-export function buildExcelExport(input: {
+export async function buildExcelExport(input: {
   rows: SavedRow[]
   template: Template
   mode: "all_good" | "same_tabs" | "selected_sheet" | "filtered" | "missing_summary"
   sheetName?: string
 }) {
-  const workbook = XLSX.utils.book_new()
+  const workbook = new ExcelJS.Workbook()
+  workbook.creator = "GrowEasy"
+  workbook.created = new Date()
+  workbook.modified = new Date()
+
   const rows = input.sheetName ? input.rows.filter((row) => row.sheet_name === input.sheetName) : input.rows
 
   logger.info({ rowCount: rows.length, mode: input.mode, sheetName: input.sheetName }, "Building Excel export")
@@ -28,54 +32,58 @@ export function buildExcelExport(input: {
     appendRowsSheet(workbook, "Cleaned Data", rows, input.template)
   }
 
-  const summaryData: (string | number | boolean | null)[][] = [
+  const summarySheet = workbook.addWorksheet("Summary")
+  const summaryData: Array<[string, string | number]> = [
     ["Metric", "Value"],
     ["Saved rows", rows.length],
     ["Sheets", new Set(rows.map((row) => row.sheet_name)).size],
     ["Exported at", new Date().toISOString()],
   ]
-  const summarySheet = XLSX.utils.aoa_to_sheet(summaryData)
-  autoFitColumns(summarySheet, summaryData)
-  XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary")
 
-  return XLSX.write(workbook, {
-    bookType: "xlsx",
-    type: "buffer",
-  }) as Buffer
+  summarySheet.addRows(summaryData)
+  autoFitColumns(summarySheet)
+
+  const buffer = await workbook.xlsx.writeBuffer()
+  return Buffer.from(buffer)
 }
 
-function appendRowsSheet(workbook: XLSX.WorkBook, sheetName: string, rows: SavedRow[], template: Template) {
+function appendRowsSheet(workbook: ExcelJS.Workbook, sheetName: string, rows: SavedRow[], template: Template) {
+  const worksheet = workbook.addWorksheet(sheetName)
   const headers = template.columns_config.map((column) => column.export_title)
-  const body = rows.map((row) =>
-    template.columns_config.map((column) => row.cleaned_data[column.key] ?? "")
-  )
-  const data = [headers, ...body]
-  const worksheet = XLSX.utils.aoa_to_sheet(data)
-  autoFitColumns(worksheet, data)
 
-  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
-}
+  worksheet.addRow(headers)
 
-function autoFitColumns(worksheet: XLSX.WorkSheet, data: (string | number | boolean | null)[][]) {
-  if (data.length === 0) return
-
-  const colCount = data[0].length
-  const colWidths: number[] = Array(colCount).fill(0)
-
-  for (const row of data) {
-    for (let c = 0; c < row.length && c < colCount; c++) {
-      const cell = String(row[c] ?? "")
-      const lines = cell.split("\n")
-      for (const line of lines) {
-        const charWidth = [...line].reduce((acc, ch) => acc + (ch.charCodeAt(0) > 127 ? 2 : 1), 0)
-        colWidths[c] = Math.max(colWidths[c], charWidth)
-      }
-    }
+  for (const row of rows) {
+    worksheet.addRow(template.columns_config.map((column) => toExcelValue(row.cleaned_data[column.key])))
   }
 
-  worksheet["!cols"] = colWidths.map((width) => ({
-    wch: Math.min(Math.max(width + 2, 8), 50),
-  }))
+  worksheet.getRow(1).font = { bold: true }
+  autoFitColumns(worksheet)
+}
+
+function toExcelValue(value: CellValue) {
+  if (value === null || value === undefined) {
+    return ""
+  }
+
+  if (typeof value === "string" && /^([=+@]|-[A-Za-z(])/.test(value.trim())) {
+    return `'${value}`
+  }
+
+  return value
+}
+
+function autoFitColumns(worksheet: ExcelJS.Worksheet) {
+  worksheet.columns.forEach((column) => {
+    let width = 8
+
+    column.eachCell?.({ includeEmpty: true }, (cell) => {
+      const text = String(cell.value ?? "")
+      width = Math.max(width, ...text.split("\n").map((line) => line.length + 2))
+    })
+
+    column.width = Math.min(width, 50)
+  })
 }
 
 function safeSheetName(value: string) {

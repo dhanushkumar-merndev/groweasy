@@ -168,20 +168,27 @@ export function VirtualTable({
   }
 
   async function exportTemplateExcel() {
-    const XLSX = await import("xlsx")
+    const ExcelJS = await import("exceljs")
     const headers = columns.map((column) => column.export_title || column.label)
-    const data = localRows.map((row) =>
-      Object.fromEntries(
-        columns.map((column, index) => [
-          headers[index],
-          row.cleaned_data[column.key] ?? "",
-        ])
-      )
-    )
-    const worksheet = XLSX.utils.json_to_sheet(data, { header: headers })
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Saved Rows")
-    XLSX.writeFile(workbook, `${template.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "template"}-rows.xlsx`)
+    const workbook = new ExcelJS.Workbook()
+    const worksheet = workbook.addWorksheet("Saved Rows")
+
+    worksheet.addRow(headers)
+    localRows.forEach((row) => {
+      worksheet.addRow(columns.map((column) => sanitizeExportValue(row.cleaned_data[column.key])))
+    })
+    worksheet.getRow(1).font = { bold: true }
+
+    const buffer = await workbook.xlsx.writeBuffer()
+    const blob = new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = `${template.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "template"}-rows.xlsx`
+    anchor.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -333,4 +340,12 @@ function GridCell({ children, head = false, title }: { children: React.ReactNode
       {primitiveContent ? <span className="block min-w-0 truncate">{children}</span> : children}
     </div>
   )
+}
+
+function sanitizeExportValue(value: SavedRow["cleaned_data"][string]) {
+  if (typeof value === "string" && /^([=+@]|-[A-Za-z(])/.test(value.trim())) {
+    return `'${value}`
+  }
+
+  return value ?? ""
 }

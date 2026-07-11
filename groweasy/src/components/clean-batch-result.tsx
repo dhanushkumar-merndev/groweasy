@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import * as XLSX from "xlsx"
+import ExcelJS from "exceljs"
 import { TrashIcon, ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from "lucide-react"
 
 import {
@@ -144,8 +144,8 @@ export function CleanBatchResultView({ result, template }: { result: CleanBatchR
     setPage(0)
   }
 
-  const exportToExcel = (mode: string) => {
-    const wb = XLSX.utils.book_new()
+  const exportToExcel = async (mode: string) => {
+    const workbook = new ExcelJS.Workbook()
     const formatRows = (rows: CleanBatchRow[]) => rows.map(r => ({
       "File Row": r.source_row_index,
       "Sheet": r.source_sheet,
@@ -155,16 +155,16 @@ export function CleanBatchResultView({ result, template }: { result: CleanBatchR
     }))
 
     if (mode === "all_tabs" || mode === "all") {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(formatRows(computedRows)), "All Rows")
+      appendJsonSheet(workbook, "All Rows", formatRows(computedRows))
     }
     if (mode === "all_tabs" || mode === "good") {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(formatRows(computedRows.filter(r => r.status === "good"))), "Good Rows")
+      appendJsonSheet(workbook, "Good Rows", formatRows(computedRows.filter(r => r.status === "good")))
     }
     if (mode === "all_tabs" || mode === "missing") {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(formatRows(computedRows.filter(r => r.status === "missing"))), "Missing Rows")
+      appendJsonSheet(workbook, "Missing Rows", formatRows(computedRows.filter(r => r.status === "missing")))
     }
     if (mode === "all_tabs" || mode === "skipped") {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(formatRows(computedRows.filter(r => r.status === "skipped"))), "Skipped Rows")
+      appendJsonSheet(workbook, "Skipped Rows", formatRows(computedRows.filter(r => r.status === "skipped")))
     }
     if (mode === "all_tabs" || mode === "ai_changes") {
       const changes = computedRows.flatMap(r => r.ai_changes.map(c => ({
@@ -174,7 +174,7 @@ export function CleanBatchResultView({ result, template }: { result: CleanBatchR
         "After": c.after,
         "Reason": c.reason
       })))
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(changes), "AI Changes")
+      appendJsonSheet(workbook, "AI Changes", changes)
     }
     if (mode === "all_tabs" || mode === "summary") {
       const summaryData = [
@@ -183,10 +183,11 @@ export function CleanBatchResultView({ result, template }: { result: CleanBatchR
         { Metric: "Missing Rows", Value: computedRows.filter(r => r.status === "missing").length },
         { Metric: "Skipped Rows", Value: computedRows.filter(r => r.status === "skipped").length },
       ]
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryData), "Summary")
+      appendJsonSheet(workbook, "Summary", summaryData)
     }
 
-    XLSX.writeFile(wb, `Cleaned_Batch_${result.batch_id}_${mode}.xlsx`)
+    const buffer = await workbook.xlsx.writeBuffer()
+    downloadWorkbook(buffer, `Cleaned_Batch_${result.batch_id}_${mode}.xlsx`)
   }
 
   const getCol = (possibleKeys: string[]) => {
@@ -204,10 +205,10 @@ export function CleanBatchResultView({ result, template }: { result: CleanBatchR
           <SummaryMetric label="Skipped" value={computedRows.filter(r => r.status === "skipped").length} />
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => exportToExcel("all_tabs")}>
+          <Button variant="outline" size="sm" onClick={() => void exportToExcel("all_tabs")}>
             <DownloadIcon className="size-4 mr-2" /> Export All Sheets
           </Button>
-          <Button variant="outline" size="sm" onClick={() => exportToExcel(activeTab === "all" ? "all" : activeTab)}>
+          <Button variant="outline" size="sm" onClick={() => void exportToExcel(activeTab === "all" ? "all" : activeTab)}>
             <DownloadIcon className="size-4 mr-2" /> Export Current
           </Button>
         </div>
@@ -377,6 +378,38 @@ export function CleanBatchResultView({ result, template }: { result: CleanBatchR
   )
 }
 
+function appendJsonSheet(workbook: ExcelJS.Workbook, name: string, rows: Array<Record<string, CleanedValue>>) {
+  const worksheet = workbook.addWorksheet(name)
+  const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))]
+
+  worksheet.addRow(headers)
+  rows.forEach((row) => {
+    worksheet.addRow(headers.map((header) => sanitizeExportValue(row[header])))
+  })
+
+  worksheet.getRow(1).font = { bold: true }
+}
+
+function sanitizeExportValue(value: CleanedValue) {
+  if (typeof value === "string" && /^([=+@]|-[A-Za-z(])/.test(value.trim())) {
+    return `'${value}`
+  }
+
+  return value ?? ""
+}
+
+function downloadWorkbook(buffer: ExcelJS.Buffer, filename: string) {
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 function EditableCell({ 
   row, 
   fieldKey, 
@@ -435,4 +468,3 @@ function statusLabel(status: CleanBatchRow["status"]) {
       return <span className="text-muted-foreground font-medium">⏭️ Skipped</span>
   }
 }
-

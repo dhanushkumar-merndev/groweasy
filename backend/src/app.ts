@@ -17,6 +17,8 @@ import { logger } from "./lib/logger.js"
 
 const app = express()
 const configuredFrontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000"
+const generalRateLimitMax = readNumberEnv("RATE_LIMIT_PER_MINUTE", 300, { min: 60, max: 2_000 })
+const authRateLimitMax = readNumberEnv("AUTH_RATE_LIMIT_PER_MINUTE", 60, { min: 20, max: 500 })
 const allowedOrigins = new Set(
   configuredFrontendUrl
     .split(",")
@@ -55,7 +57,7 @@ app.use((req, _res, next) => {
 
 const limiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 60,
+  max: generalRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: { code: "RATE_LIMITED", message: "Too many requests. Try again shortly." } },
@@ -63,7 +65,7 @@ const limiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 20,
+  max: authRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: { code: "RATE_LIMITED", message: "Too many auth requests. Try again shortly." } },
@@ -91,3 +93,13 @@ app.get("/api/health", (_req, res) => {
 app.use(globalErrorHandler)
 
 export default app
+
+function readNumberEnv(name: string, fallback: number, bounds: { min: number; max: number }) {
+  const parsed = Number(process.env[name])
+
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+
+  return Math.min(Math.max(Math.trunc(parsed), bounds.min), bounds.max)
+}

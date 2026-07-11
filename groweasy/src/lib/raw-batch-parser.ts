@@ -1,5 +1,5 @@
 import Papa from "papaparse"
-import * as XLSX from "xlsx"
+import ExcelJS from "exceljs"
 
 import type { Template, TemplateColumn } from "@/lib/types"
 
@@ -37,7 +37,7 @@ export type ParsedRawUpload = {
 }
 
 const CSV_SHEET_NAME = "CSV Upload"
-const SUPPORTED_EXCEL_EXTENSIONS = [".xlsx", ".xls"]
+const SUPPORTED_EXCEL_EXTENSIONS = [".xlsx"]
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 const FORMULA_LIKE_RE = /^([=+@]|-[A-Za-z(])/
 const SAFE_PLUS_NUMBER_RE = /^\+\d[\d\s().-]*$/
@@ -57,7 +57,7 @@ export async function parseFileToRawRows(file: File): Promise<ParsedRawUpload> {
     return parseExcelFile(file)
   }
 
-  throw new Error("Upload a CSV, XLS, or XLSX file.")
+  throw new Error("Upload a CSV or XLSX file.")
 }
 
 export function createRawBatchPayload(template: Template, parsedUpload: ParsedRawUpload): RawBatchPayload {
@@ -95,52 +95,40 @@ async function parseCsvFile(file: File): Promise<ParsedRawUpload> {
 }
 
 async function parseExcelFile(file: File): Promise<ParsedRawUpload> {
-  const workbook = XLSX.read(await file.arrayBuffer(), {
-    type: "array",
-    bookFiles: false,
-    bookVBA: false,
-    cellFormula: false,
-    cellText: true,
-  })
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(await file.arrayBuffer())
   const sheets: ParsedRawUpload["sheets"] = []
   const rows: RawBatchRow[] = []
 
-  workbook.SheetNames.forEach((sheetName, sheetIndex) => {
-    const matrix = worksheetToMatrix(workbook.Sheets[sheetName])
+  workbook.worksheets.forEach((worksheet, sheetIndex) => {
+    const matrix = worksheetToMatrix(worksheet)
 
     if (isFullyEmptyMatrix(matrix)) {
       return
     }
 
-    const sheetRows = rowsFromMatrix(matrix, sheetName, sheetIndex)
+    const sheetRows = rowsFromMatrix(matrix, worksheet.name, sheetIndex)
 
-    sheets.push({ name: sheetName, rows: sheetRows.length })
+    sheets.push({ name: worksheet.name, rows: sheetRows.length })
     rows.push(...sheetRows)
   })
 
   return { sheets, rows }
 }
 
-function worksheetToMatrix(worksheet: XLSX.WorkSheet | undefined) {
-  const ref = worksheet?.["!ref"]
-
-  if (!worksheet || !ref) {
-    return []
-  }
-
-  const range = XLSX.utils.decode_range(ref)
+function worksheetToMatrix(worksheet: ExcelJS.Worksheet) {
   const matrix: string[][] = []
+  const maxColumn = worksheet.actualColumnCount || worksheet.columnCount
 
-  for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
-    const row: string[] = []
+  worksheet.eachRow({ includeEmpty: true }, (worksheetRow, rowIndex) => {
+    const cells: string[] = []
 
-    for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex += 1) {
-      const address = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })
-      row.push(cellToString(worksheet[address]))
+    for (let columnIndex = 1; columnIndex <= maxColumn; columnIndex += 1) {
+      cells.push(cellToString(worksheetRow.getCell(columnIndex)))
     }
 
-    matrix.push(row)
-  }
+    matrix[rowIndex - 1] = cells
+  })
 
   return matrix
 }
@@ -200,6 +188,10 @@ function isFullyEmptyMatrix(matrix: string[][]) {
 }
 
 function cellToString(value: unknown) {
+  if (isExcelCell(value)) {
+    return cellToString(extractExcelCellValue(value))
+  }
+
   if (value === null || value === undefined) {
     return ""
   }
@@ -219,6 +211,32 @@ function cellToString(value: unknown) {
   }
 
   return compact
+}
+
+function isExcelCell(value: unknown): value is ExcelJS.Cell {
+  return Boolean(value && typeof value === "object" && "value" in value && "text" in value)
+}
+
+function extractExcelCellValue(cell: ExcelJS.Cell) {
+  const value = cell.value
+
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  if (value && typeof value === "object" && "formula" in value) {
+    return `=${String(value.formula ?? "")}`
+  }
+
+  if (value && typeof value === "object" && "richText" in value && Array.isArray(value.richText)) {
+    return value.richText.map((item) => item.text).join("")
+  }
+
+  if (value && typeof value === "object" && "text" in value) {
+    return String(value.text ?? "")
+  }
+
+  return value ?? cell.text
 }
 
 function toRawBatchColumn(column: TemplateColumn): RawBatchTemplateColumn {

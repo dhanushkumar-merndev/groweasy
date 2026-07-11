@@ -328,7 +328,7 @@ export function UploadDropzone({
             ref={inputRef}
             type="file"
             multiple
-            accept=".xlsx,.xls,.csv"
+            accept=".xlsx,.csv"
             className="sr-only"
             onChange={(e) => {
               const selected = e.target.files
@@ -341,7 +341,7 @@ export function UploadDropzone({
           <div className="space-y-1">
             <p className="text-lg font-medium">Drop spreadsheets or click to browse</p>
             <p className="text-sm text-muted-foreground">
-              Supports .xlsx, .xls, and .csv — multiple files and sheets.
+              Supports .xlsx and .csv — multiple files and sheets.
             </p>
           </div>
         </label>
