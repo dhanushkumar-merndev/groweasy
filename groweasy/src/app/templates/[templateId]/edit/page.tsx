@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation"
+import { redirect } from "next/navigation"
 
 import { AppShell } from "@/components/app-shell"
 import { TemplateForm } from "@/components/template-form"
@@ -11,7 +11,7 @@ export default async function EditTemplatePage({ params }: { params: Promise<{ t
   const { template } = await serverFetch<{ template: Template | null }>(`/templates/${templateId}`)
 
   if (!template) {
-    notFound()
+    redirect("/templates")
   }
 
   return (

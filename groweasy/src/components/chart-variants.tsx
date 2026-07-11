@@ -13,10 +13,17 @@ import {
   LineChart,
   Pie,
   PieChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+  RadialBar,
+  RadialBarChart,
   XAxis,
   YAxis,
 } from "recharts"
-import { BarChart3Icon, Loader2Icon, MenuIcon, PlusIcon, SparklesIcon, TrashIcon } from "lucide-react"
+import { Loader2Icon, MenuIcon, PlusIcon, SparklesIcon, TrashIcon } from "lucide-react"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -52,7 +59,7 @@ const chartConfig = {
   },
 } satisfies ChartConfig
 
-type ChartVariant = "line" | "bar" | "pie" | "horizontal_bar" | "vertical_bar" | "area"
+type ChartVariant = "line" | "bar" | "pie" | "horizontal_bar" | "vertical_bar" | "area" | "radar" | "radial_bar"
 type ChartDatum = { name: string; value: number }
 type ChartSpec = {
   id: string
@@ -60,7 +67,7 @@ type ChartSpec = {
   description: string
   reason?: string
   columnKey?: string
-  variant: Exclude<ChartVariant, "area">
+  variant: ChartVariant
   data: ChartDatum[]
   layout: "wide" | "medium" | "compact"
 }
@@ -245,11 +252,37 @@ function variantForColumn(rows: SavedRow[], column: TemplateColumn): ChartSpec["
   if (kind === "time") return "line"
   if (kind === "measure") return "bar"
   if (data.length <= 4) return "pie"
+  if (data.length <= 6) return "radar"
   return "horizontal_bar"
 }
 
-function buildDynamicSpecs(rows: SavedRow[], template: Template): ChartSpec[] {
+function diversifyVariants(specs: ChartSpec[]): ChartSpec[] {
+  const variantPool: ChartVariant[] = ["horizontal_bar", "pie", "area", "bar", "radar", "radial_bar", "line"]
+  const usedVariants = new Set<ChartVariant>()
+  const result = specs.map((spec) => {
+    if (!usedVariants.has(spec.variant)) {
+      usedVariants.add(spec.variant)
+      return spec
+    }
+    const alt = variantPool.find((v) => !usedVariants.has(v) && v !== "line")
+    if (alt) {
+      usedVariants.add(alt)
+      return { ...spec, variant: alt, reason: reasonForVariantSwap(spec, alt) }
+    }
+    usedVariants.add(spec.variant)
+    return spec
+  })
+  return result
+}
+
+function reasonForVariantSwap(spec: ChartSpec, newVariant: ChartVariant) {
+  const names: Record<string, string> = { radar: "radar", radial_bar: "radial bar", area: "area", pie: "donut", horizontal_bar: "horizontal bar", bar: "bar" }
+  return `Switched to ${names[newVariant] ?? newVariant} chart for visual variety — ${spec.data.length} groups.`
+}
+
+function buildDynamicSpecs(rows: SavedRow[], template: Template, primaryDateColumn?: string): ChartSpec[] {
   const specs: ChartSpec[] = template.columns_config
+    .filter((column) => column.key !== primaryDateColumn)
     .map<RankedChartSpec>((column) => {
       const variant = variantForColumn(rows, column)
       const data = variant === "line" ? buildDateColumnData(rows, column.key) : buildColumnData(rows, column.key)
@@ -271,35 +304,52 @@ function buildDynamicSpecs(rows: SavedRow[], template: Template): ChartSpec[] {
     })
     .sort((a, b) => a.rank - b.rank || b.data.length - a.data.length)
     .slice(0, 6)
-    .map(({ rank, ...spec }) => spec)
+    .map((spec) => ({
+      id: spec.id,
+      title: spec.title,
+      description: spec.description,
+      reason: spec.reason,
+      columnKey: spec.columnKey,
+      variant: spec.variant,
+      data: spec.data,
+      layout: spec.layout,
+    }))
+
+  const diversified = diversifyVariants(specs)
 
   const aiData = buildAiChangeData(rows)
   if (aiData.length > 0) {
-    specs.push({
+    const usedVariants = new Set(diversified.map((s) => s.variant))
+    const aiVariant: ChartVariant = !usedVariants.has("radial_bar") ? "radial_bar" : !usedVariants.has("bar") ? "bar" : "bar"
+    diversified.push({
       id: "ai_changes",
       title: "AI changes by field",
       description: "Fields edited during cleaning",
       reason: "Highlights which fields needed the most AI cleanup, so review effort is easier to spot.",
-      variant: "bar",
+      variant: aiVariant,
       data: aiData,
-      layout: specs.length < 2 ? "wide" : "medium",
+      layout: diversified.length < 2 ? "wide" : "medium",
     })
   }
-  return specs
+  return diversified
 }
 
-function specsFromSuggestions(rows: SavedRow[], charts: SuggestedChart[]): ChartSpec[] {
+function specsFromSuggestions(rows: SavedRow[], charts: SuggestedChart[], primaryDateColumn?: string): ChartSpec[] {
   const specs: ChartSpec[] = []
   for (const chart of charts) {
-    const variant = (["line", "bar", "pie", "horizontal_bar", "vertical_bar"].includes(chart.chart_type) ? chart.chart_type : null) as ChartSpec["variant"] | null
-    const data = variant === "line" ? buildDateColumnData(rows, chart.x_axis || chart.id) : buildColumnData(rows, chart.x_axis || chart.id)
+    const colKey = chart.x_axis || chart.id
+    if (primaryDateColumn && colKey.toLowerCase().trim() === primaryDateColumn.toLowerCase().trim()) {
+      continue
+    }
+    const variant = (["line", "area", "bar", "pie", "horizontal_bar", "vertical_bar", "radar", "radial_bar"].includes(chart.chart_type) ? chart.chart_type : null) as ChartSpec["variant"] | null
+    const data = variant === "line" || variant === "area" ? buildDateColumnData(rows, colKey) : buildColumnData(rows, colKey)
     if (!variant || data.length < 2) continue
     specs.push({
       id: chart.id,
       title: chart.title,
       description: `${data.length} groups`,
       reason: chart.reason,
-      columnKey: chart.x_axis || chart.id,
+      columnKey: colKey,
       variant,
       data,
       layout: chart.layout,
@@ -340,8 +390,53 @@ export function ChartVariants({
     })
   }, [allRows, dateRange, primaryDateColumn])
 
+  // Reset local state when template, AI mode, or data dependencies change (render-time reset to avoid effect lint)
+  const [prevTemplate, setPrevTemplate] = useState(template)
+  const [prevAi, setPrevAi] = useState(useAiSuggestions)
+  const [prevImportId, setPrevImportId] = useState<string | undefined>(filteredRows[0]?.import_id)
+  const [prevLength, setPrevLength] = useState(filteredRows.length)
+  const [prevSuggested, setPrevSuggested] = useState<ChartSpec[] | null>(null)
+
+  const currentImportId = filteredRows[0]?.import_id
+  const currentLength = filteredRows.length
+
+  if (
+    template !== prevTemplate ||
+    useAiSuggestions !== prevAi ||
+    currentImportId !== prevImportId ||
+    currentLength !== prevLength
+  ) {
+    setPrevTemplate(template)
+    setPrevAi(useAiSuggestions)
+    setPrevImportId(currentImportId)
+    setPrevLength(currentLength)
+
+    setSelectedColumn(template.columns_config[0]?.key ?? "")
+    setManualSpecs([])
+    setEditedSpecs(null)
+    setActiveChartId(null)
+
+    if (useAiSuggestions) {
+      if (currentImportId && currentLength > 0) {
+        setAiState("loading")
+      } else {
+        setAiState("fallback")
+      }
+    } else {
+      setAiState("idle")
+    }
+    setSuggestedSpecs(null)
+    setPrevSuggested(null)
+  }
+
+  if (suggestedSpecs !== prevSuggested) {
+    setPrevSuggested(suggestedSpecs)
+    setEditedSpecs(null)
+    setActiveChartId(null)
+  }
+
   const trendData = useMemo(() => buildTrendData(filteredRows, primaryDateColumn), [filteredRows, primaryDateColumn])
-  const fallbackSpecs = useMemo(() => buildDynamicSpecs(filteredRows, template), [filteredRows, template])
+  const fallbackSpecs = useMemo(() => buildDynamicSpecs(filteredRows, template, primaryDateColumn), [filteredRows, template, primaryDateColumn])
   const waitingForAi = useAiSuggestions && aiState === "loading" && suggestedSpecs === null
   const baseSpecs = useAiSuggestions
     ? suggestedSpecs?.length
@@ -354,29 +449,14 @@ export function ChartVariants({
   const activeChart = chartSpecs.find((s) => s.id === activeChartId) ?? chartSpecs[0] ?? null
 
   useEffect(() => {
-    setSelectedColumn(template.columns_config[0]?.key ?? "")
-    setManualSpecs([])
-    setEditedSpecs(null)
-    setActiveChartId(null)
-    setAiState(useAiSuggestions ? "loading" : "idle")
-  }, [template, useAiSuggestions])
-  useEffect(() => { setEditedSpecs(null); setActiveChartId(null) }, [suggestedSpecs])
-
-  useEffect(() => {
     if (!useAiSuggestions) {
-      setSuggestedSpecs(null)
-      setAiState("idle")
       return
     }
     const importId = filteredRows[0]?.import_id
     if (!importId || filteredRows.length === 0) {
-      setSuggestedSpecs(null)
-      setAiState("fallback")
       return
     }
     const ctrl = new AbortController()
-    setSuggestedSpecs(null)
-    setAiState("loading")
     void (async () => {
       try {
         const res = await api("/analytics/suggest-chart", {
@@ -384,7 +464,7 @@ export function ChartVariants({
           body: JSON.stringify({ import_id: importId, columns: template.columns_config.map((c) => c.key), template_columns: template.columns_config, column_profiles: buildColumnProfiles(filteredRows, template), sample_rows: filteredRows.slice(0, 40).map((r) => r.cleaned_data), filters: {} }),
         })
         const payload = (await res.json()) as { charts?: SuggestedChart[] }
-        const next = specsFromSuggestions(filteredRows, payload.charts ?? [])
+        const next = specsFromSuggestions(filteredRows, payload.charts ?? [], primaryDateColumn)
         setSuggestedSpecs(next.length ? next : null)
         setAiState(next.length ? "ready" : "fallback")
       } catch {
@@ -395,12 +475,12 @@ export function ChartVariants({
       }
     })()
     return () => ctrl.abort()
-  }, [filteredRows, template, useAiSuggestions])
+  }, [filteredRows, template, useAiSuggestions, primaryDateColumn])
 
   function addManualChart() {
     const column = template.columns_config.find((c) => c.key === selectedColumn)
     if (!column) return
-    const data = selectedChart === "line" ? buildDateColumnData(filteredRows, column.key) : buildColumnData(filteredRows, column.key)
+    const data = selectedChart === "line" || selectedChart === "area" ? buildDateColumnData(filteredRows, column.key) : buildColumnData(filteredRows, column.key)
     if (data.length < 2) return
     setManualSpecs((cur) => [...cur, { id: `manual_${column.key}_${cur.length}`, title: `${column.label} breakdown`, description: `${data.length} groups`, reason: reasonForColumn(column, selectedChart, data), columnKey: column.key, variant: selectedChart, data, layout: layoutForData(data) }])
     setEditedSpecs(null)
@@ -413,7 +493,7 @@ export function ChartVariants({
       const key = next.columnKey ?? s.columnKey
       const col = template.columns_config.find((c) => c.key === key)
       const variant = next.variant ?? s.variant
-      const data = col ? (variant === "line" ? buildDateColumnData(filteredRows, col.key) : buildColumnData(filteredRows, col.key)) : s.data
+      const data = col ? (variant === "line" || variant === "area" ? buildDateColumnData(filteredRows, col.key) : buildColumnData(filteredRows, col.key)) : s.data
       return {
         ...s,
         ...next,
@@ -474,9 +554,12 @@ export function ChartVariants({
                     <SelectContent>
                       <SelectItem value="horizontal_bar">Horizontal bar</SelectItem>
                       <SelectItem value="line">Line</SelectItem>
+                      <SelectItem value="area">Area</SelectItem>
                       <SelectItem value="bar">Bar</SelectItem>
                       <SelectItem value="vertical_bar">Vertical bar</SelectItem>
                       <SelectItem value="pie">Donut</SelectItem>
+                      <SelectItem value="radar">Radar</SelectItem>
+                      <SelectItem value="radial_bar">Radial bar</SelectItem>
                     </SelectContent>
                   </Select>
                   <Select value={activeChart.layout} onValueChange={(v) => v && updateActiveChart({ layout: v as ChartSpec["layout"] })}>
@@ -501,9 +584,12 @@ export function ChartVariants({
                   <SelectContent>
                     <SelectItem value="horizontal_bar">Horizontal bar</SelectItem>
                     <SelectItem value="line">Line</SelectItem>
+                    <SelectItem value="area">Area</SelectItem>
                     <SelectItem value="bar">Bar</SelectItem>
                     <SelectItem value="vertical_bar">Vertical bar</SelectItem>
                     <SelectItem value="pie">Donut</SelectItem>
+                    <SelectItem value="radar">Radar</SelectItem>
+                    <SelectItem value="radial_bar">Radial bar</SelectItem>
                   </SelectContent>
                 </Select>
                 <Button size="sm" variant="outline" onClick={addManualChart}><PlusIcon />Add chart</Button>
@@ -544,6 +630,8 @@ export function ChartVariants({
             <CardContent>
               {spec.variant === "pie" ? (
                 <PieDonutChart data={spec.data} compact={spec.layout === "compact"} />
+              ) : spec.variant === "radial_bar" ? (
+                <RadialBarChartBlock data={spec.data} compact={spec.layout === "compact"} />
               ) : (
                 <ChartContainer config={chartConfig} className={chartHeightClassName(spec.layout)}>
                   {renderChartVariant(spec.variant, spec.data)}
@@ -559,7 +647,10 @@ export function ChartVariants({
 
 function reasonForColumn(column: TemplateColumn, variant: ChartSpec["variant"], data: ChartDatum[]) {
   if (variant === "line") return `${column.label} looks date-like, so a trend chart makes row movement easier to read.`
+  if (variant === "area") return `${column.label} looks date-like, so an area chart shows both trend direction and lead volume.`
   if (variant === "pie") return `${column.label} has a small set of groups, which makes the split clear at a glance.`
+  if (variant === "radar") return `${column.label} has ${data.length} groups — a radar chart highlights the balance across categories.`
+  if (variant === "radial_bar") return `${column.label} has ${data.length} groups, shown as radial bars for quick magnitude comparison.`
   if (variant === "horizontal_bar") return `${column.label} has ${data.length} groups, so horizontal bars keep labels readable.`
   return `${column.label} is useful for comparing row counts across ${data.length} groups.`
 }
@@ -630,10 +721,60 @@ function PieDonutChart({ data, compact = false }: { data: ChartDatum[]; compact?
   )
 }
 
+function RadialBarChartBlock({ data, compact = false }: { data: ChartDatum[]; compact?: boolean }) {
+  const visibleData = data.slice(0, 6)
+  const radialData = visibleData.map((item, i) => ({ ...item, fill: pieColors[i % pieColors.length] }))
+  const total = visibleData.reduce((s, i) => s + i.value, 0)
+  return (
+    <div className="grid gap-3">
+      <div className={compact ? "relative mx-auto h-[150px] w-full max-w-[260px]" : "relative mx-auto h-[190px] w-full max-w-[340px]"}>
+        <ChartContainer config={chartConfig} className="aspect-auto h-full">
+          <RadialBarChart data={radialData} innerRadius={compact ? 24 : 30} outerRadius={compact ? 60 : 78} startAngle={180} endAngle={0}>
+            <ChartTooltip content={<ChartTooltipContent />} />
+            <RadialBar dataKey="value" background cornerRadius={4} />
+          </RadialBarChart>
+        </ChartContainer>
+        <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+          <div><div className="text-xl font-semibold tabular-nums">{total}</div><div className="text-[11px] text-muted-foreground">Total</div></div>
+        </div>
+      </div>
+      <div className={compact ? "grid gap-y-2 text-xs" : "grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3"}>
+        {visibleData.map((item, i) => (
+          <div key={item.name} className="flex min-w-0 items-center gap-2">
+            <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: pieColors[i % pieColors.length] }} />
+            <span className="truncate text-muted-foreground">{item.name}</span>
+            <span className="ml-auto font-medium tabular-nums">{item.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function renderChartVariant(type: ChartVariant, data: ChartDatum[]) {
   if (type === "pie") {
     return (
       <PieChart><ChartTooltip content={<ChartTooltipContent />} /><Pie data={data} dataKey="value" nameKey="name" outerRadius={80} innerRadius={45} label>{data.map((item, i) => (<Cell key={item.name} fill={pieColors[i % pieColors.length]} />))}</Pie></PieChart>
+    )
+  }
+  if (type === "radar") {
+    return (
+      <RadarChart data={data} outerRadius="70%">
+        <PolarGrid stroke="var(--border)" />
+        <PolarAngleAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} />
+        <PolarRadiusAxis tick={{ fontSize: 10 }} />
+        <ChartTooltip content={<ChartTooltipContent />} />
+        <Radar dataKey="value" fill="var(--color-value)" fillOpacity={0.4} stroke="var(--color-value)" strokeWidth={2} />
+      </RadarChart>
+    )
+  }
+  if (type === "radial_bar") {
+    const radialData = data.slice(0, 6).map((item, i) => ({ ...item, fill: pieColors[i % pieColors.length] }))
+    return (
+      <RadialBarChart data={radialData} innerRadius={30} outerRadius={80} startAngle={180} endAngle={0}>
+        <ChartTooltip content={<ChartTooltipContent />} />
+        <RadialBar dataKey="value" background cornerRadius={4} />
+      </RadialBarChart>
     )
   }
   if (type === "line") {

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation"
 import Link from "next/link"
 
 import { AppShell } from "@/components/app-shell"
@@ -20,7 +21,7 @@ export default async function ExportPage({ params }: { params: Promise<{ importI
   )
   const { import: job, template } = importData
 
-  if (!job || !template) return null
+  if (!job || !template) redirect("/upload")
 
   const results = await serverFetch<{ rows: CleanedRow[] }>(`/imports/${importId}/results`)
   const rows = results.rows

@@ -12,15 +12,17 @@ export default async function TemplatesPage() {
 
   const { templates } = await serverFetch<{ templates: Template[] }>("/templates")
 
+  const isDemo = (template: Template) => template.user_id === "demo-user"
+
   return (
     <AppShell
       title="Templates"
       description="The default GrowEasy CRM lead schema used for every upload."
     >
-      <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {templates.map((template) => (
-          <Card key={template.id} className="h-fit py-0">
-            <div className="grid gap-4 p-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {templates.map((template) => {
+          const inner = (
+            <div className="flex flex-col gap-4 p-4 flex-1">
               <div className="flex items-start justify-between gap-3">
                 <div className="grid gap-1">
                   <CardTitle>{template.name}</CardTitle>
@@ -29,7 +31,7 @@ export default async function TemplatesPage() {
                   </p>
                 </div>
                 <Badge variant="outline">
-                  {template.user_id === "demo-user" ? (
+                  {isDemo(template) ? (
                     <>
                       <LockIcon className="size-3" />
                       Locked
@@ -47,15 +49,33 @@ export default async function TemplatesPage() {
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                Default CRM schema used for upload cleaning.
+                {isDemo(template)
+                  ? "Default CRM schema used for upload cleaning."
+                  : "Custom schema for upload cleaning."}
               </p>
             </div>
-          </Card>
-        ))}
-        <Card className="h-fit border-dashed py-0">
+          )
+
+          if (isDemo(template)) {
+            return (
+              <Card key={template.id} className="py-0">
+                {inner}
+              </Card>
+            )
+          }
+
+          return (
+            <Card key={template.id} className="py-0 transition-colors hover:bg-muted/25">
+              <Link href={`/templates/${template.id}/edit`} className="flex flex-1">
+                {inner}
+              </Link>
+            </Card>
+          )
+        })}
+        <Card className="border-dashed py-0">
           <Link
             href="/templates/new"
-            className="flex flex-col items-center justify-center gap-3 p-6 text-center transition-colors hover:bg-muted/25"
+            className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center transition-colors hover:bg-muted/25"
           >
             <span className="grid size-12 place-items-center rounded-full border bg-muted/30 text-muted-foreground">
               <PlusIcon className="size-5" />

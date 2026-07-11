@@ -14,6 +14,10 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import type { FormattingRule, Template, TemplateColumn } from "@/lib/types"
 
+let nextUid = 1
+
+type ColumnWithUid = TemplateColumn & { _uid: number }
+
 const defaultColumn: TemplateColumn = {
   key: "new_column",
   label: "New Column",
@@ -23,9 +27,11 @@ const defaultColumn: TemplateColumn = {
   export_title: "NEW COLUMN",
 }
 
-function createColumn(index: number): TemplateColumn {
-  if (index === 0) return defaultColumn
+function createColumn(index: number): ColumnWithUid {
+  const uid = nextUid++
+  if (index === 0) return { _uid: uid, ...defaultColumn }
   return {
+    _uid: uid,
     ...defaultColumn,
     key: `new_column_${index + 1}`,
     label: `New Column ${index + 1}`,
@@ -48,7 +54,9 @@ export function TemplateForm({ template }: { template?: Template }) {
   const router = useRouter()
   const editing = Boolean(template?.id)
   const [name, setName] = useState(template?.name ?? "Grow Easy CRM")
-  const [columns, setColumns] = useState<TemplateColumn[]>(template?.columns_config ?? [createColumn(0)])
+  const [columns, setColumns] = useState<ColumnWithUid[]>(
+    (template?.columns_config ?? [createColumn(0)]).map((col) => ({ ...col, _uid: (_uid(col as ColumnWithUid)) }))
+  )
   const [pending, startTransition] = useTransition()
 
   function updateColumn(index: number, patch: Partial<TemplateColumn>) {
@@ -74,7 +82,7 @@ export function TemplateForm({ template }: { template?: Template }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name,
-            columns_config: columns,
+            columns_config: columns.map(({ _uid: _, ...col }) => col),
             formatting_rules: {},
           }),
         })
@@ -128,7 +136,7 @@ export function TemplateForm({ template }: { template?: Template }) {
           </div>
         </div>
         {columns.map((column, index) => (
-          <div key={`${column.key}-${index}`} className="grid gap-4 rounded-lg border bg-card/30 p-4">
+          <div key={column._uid} className="grid gap-4 rounded-lg border bg-card/30 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <Badge variant="outline">Column {index + 1}</Badge>
@@ -228,4 +236,8 @@ function slugKey(value: string) {
     .trim()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
+}
+
+function _uid(col: ColumnWithUid) {
+  return col._uid ?? nextUid++
 }

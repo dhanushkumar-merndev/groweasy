@@ -1,4 +1,4 @@
-import { Router } from "express"
+import { Router, type Response } from "express"
 import multer from "multer"
 
 import { uploadOptionsSchema, processImportSchema, saveImportSchema, exportExcelSchema, googleSheetExportSchema, validateImportSchema } from "../lib/schemas.js"
@@ -10,8 +10,9 @@ import { requireCurrentUser } from "../middleware/auth.js"
 import { store } from "../server/repositories/store.js"
 import { processImportRows, getProcessedRows } from "../server/ai/excel-cleaner.js"
 import { buildExcelExport } from "../server/imports/export.js"
+import { learnTemplateSourceHints } from "../server/imports/source-hints.js"
 import { exportRowsToGoogleSheet } from "../server/google/sheets.js"
-import { getUserAiSettings, getUserDecryptedKey, shouldUseUserApiKey } from "./settings.js"
+import { getUserAiSettings, hasActiveUserApiKey } from "./settings.js"
 import { logger } from "../lib/logger.js"
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
@@ -50,7 +51,7 @@ router.post("/", upload.single("file"), async (req, res) => {
       dash_values_blank: req.body.dash_values_blank,
     })
 
-    const template = store.getTemplate(user.id, options.template_id)
+    const template = await store.getTemplateForUser(user.id, options.template_id)
 
     if (!template) {
       logger.warn({ userId: user.id, templateId: options.template_id }, "Template not found for upload")
@@ -106,7 +107,7 @@ router.post("/batch", async (req, res) => {
     const generateDescription = req.body.generate_description === true
     const correctSpelling = req.body.correct_spelling === true
 
-    const template = store.getTemplate(user.id, templateId)
+    const template = await store.getTemplateForUser(user.id, templateId)
 
     if (!template) {
       logger.warn({ userId: user.id, templateId }, "Template not found for batch upload")
@@ -237,7 +238,7 @@ router.get("/:id", async (req, res) => {
 
     return jsonOk(res, {
       import: job,
-      template: store.getTemplate(user.id, job.template_id),
+      template: await store.getTemplateForUser(user.id, job.template_id),
       sheets: store.listSheets(id),
       validation,
       cleaned_rows: store.listCleanedRows(id),
@@ -380,12 +381,7 @@ async function isOverDefaultApiRowLimit(userId: string, rowCount: number) {
     return false
   }
 
-  const useUserKey = await shouldUseUserApiKey(userId)
-  if (!useUserKey) {
-    return true
-  }
-
-  return !(await getUserDecryptedKey(userId))
+  return !(await hasActiveUserApiKey(userId))
 }
 
 function getDefaultApiRowLimitMessage(rowCount: number) {
@@ -404,7 +400,7 @@ router.post("/:id/process", async (req, res) => {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
-    const template = store.getTemplate(user.id, job.template_id)
+    const template = await store.getTemplateForUser(user.id, job.template_id)
     const rows = await getCache<RawImportRow[]>(cacheKeys(id).raw)
     const validation = await getCache<ValidationResult>(cacheKeys(id).validation)
 
@@ -432,6 +428,11 @@ router.post("/:id/process", async (req, res) => {
       generateDescription: validation?.generate_description ?? false,
       correctSpelling: validation?.correct_spelling ?? false,
     })
+    await store.addTemplateSourceHints(user.id, template.id, learnTemplateSourceHints({
+      template,
+      rawRows: rows,
+      cleanedRows: result.rows,
+    }))
 
     logger.info({ importId: id, modelUsed: result.modelUsed, batches: result.batches.length, rows: result.rows.length, tokenUsage: result.tokenUsage }, "Processing complete")
     return jsonOk(res, {
@@ -456,7 +457,7 @@ router.get("/:id/stream", async (req, res) => {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
-    const template = store.getTemplate(user.id, job.template_id)
+    const template = await store.getTemplateForUser(user.id, job.template_id)
     const rows = await getCache<RawImportRow[]>(cacheKeys(id).raw)
     const validation = await getCache<ValidationResult>(cacheKeys(id).validation)
 
@@ -481,7 +482,11 @@ router.get("/:id/stream", async (req, res) => {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     })
+    res.flushHeaders()
+    res.socket?.setNoDelay(true)
+    writeSse(res, { type: "connected" })
 
     store.setStatus(user.id, id, "processing")
 
@@ -512,14 +517,14 @@ router.get("/:id/stream", async (req, res) => {
       onBatchStart: async ({ batchNo, batchRows, aiRows, model }) => {
         if (closed) return
 
-        res.write(`data: ${JSON.stringify({
+        writeSse(res, {
           type: "batch_started",
           batch_no: batchNo,
           total_batches: totalBatches,
           batch_rows: batchRows,
           ai_rows: aiRows,
           model,
-        })}\n\n`)
+        })
       },
       onBatchComplete: async ({ batch, batchNo, processedRows, tokenUsage, aiRows, aiUsed }) => {
         if (closed) return
@@ -529,7 +534,7 @@ router.get("/:id/stream", async (req, res) => {
         skippedCount += batch.summary.skipped_count
         aiChangedCount += batch.summary.ai_changed_count
 
-        res.write(`data: ${JSON.stringify({
+        writeSse(res, {
           type: "batch_completed",
           batch_no: batchNo,
           total_batches: totalBatches,
@@ -549,34 +554,39 @@ router.get("/:id/stream", async (req, res) => {
             completion_tokens: Math.max(0, tokenUsage.completion_tokens - previousCompletionTokens),
             total_tokens: Math.max(0, tokenUsage.total_tokens - previousTotalTokens),
           },
-        })}\n\n`)
+        })
 
         previousPromptTokens = tokenUsage.prompt_tokens
         previousCompletionTokens = tokenUsage.completion_tokens
         previousTotalTokens = tokenUsage.total_tokens
 
-        res.write(`data: ${JSON.stringify({
+        writeSse(res, {
           type: "progress",
           processed_rows: processedRows,
           total_rows: totalRows,
           percent: totalRows > 0 ? Math.round((processedRows / totalRows) * 100) : 100,
-        })}\n\n`)
+        })
 
         if (tokenUsage.total_tokens > 0) {
-          res.write(`data: ${JSON.stringify({
+          writeSse(res, {
             type: "token_usage",
             token_usage: tokenUsage,
-          })}\n\n`)
+          })
         }
       },
     })
+    await store.addTemplateSourceHints(user.id, template.id, learnTemplateSourceHints({
+      template,
+      rawRows: rows,
+      cleanedRows: result.rows,
+    }))
 
     if (!closed) {
-      res.write(`data: ${JSON.stringify({
+      writeSse(res, {
         type: "completed",
         import_id: id,
         token_usage: result.tokenUsage,
-      })}\n\n`)
+      })
     }
 
     if (!closed) {
@@ -586,10 +596,10 @@ router.get("/:id/stream", async (req, res) => {
   } catch (error) {
     if (res.headersSent) {
       logger.error({ err: error }, "SSE stream failed")
-      res.write(`data: ${JSON.stringify({
+      writeSse(res, {
         type: "error",
         message: error instanceof Error ? error.message : "Processing failed.",
-      })}\n\n`)
+      })
       res.end()
       return
     }
@@ -597,6 +607,11 @@ router.get("/:id/stream", async (req, res) => {
     return handleRouteError(res, error)
   }
 })
+
+function writeSse(res: Response, payload: unknown) {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`)
+  ;(res as Response & { flush?: () => void }).flush?.()
+}
 
 router.get("/:id/results", async (req, res) => {
   try {
@@ -656,7 +671,7 @@ router.post("/:id/export/excel", async (req, res) => {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
-    const template = store.getTemplate(user.id, job.template_id)
+    const template = await store.getTemplateForUser(user.id, job.template_id)
 
     if (!template) {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)
@@ -716,7 +731,7 @@ router.post("/:id/export/google-sheet", async (req, res) => {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
-    const template = store.getTemplate(user.id, job.template_id)
+    const template = await store.getTemplateForUser(user.id, job.template_id)
 
     if (!template) {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)

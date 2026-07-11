@@ -19,7 +19,7 @@ router.post("/export", async (req, res) => {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
     }
 
-    const template = store.getTemplate(user.id, job.template_id)
+    const template = await store.getTemplateForUser(user.id, job.template_id)
 
     if (!template) {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)

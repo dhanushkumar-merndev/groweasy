@@ -440,7 +440,7 @@ function normalizeComparableLocation(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
 }
 
-function normalizeTextSpelling(value: string, column: TemplateColumn) {
+export function normalizeTextSpelling(value: string, column: TemplateColumn) {
   if (!value || !shouldNormalizeSpelling(column)) {
     return value
   }
@@ -564,6 +564,10 @@ const VALUE_SPELLING_FIXES: Array<[RegExp, string]> = [
   [/\bcampain\b/gi, "campaign"],
   [/\bcmapain\b/gi, "campaign"],
   [/\bcmapai\b/gi, "campaign"],
+  [/\bwebiste\b/gi, "website"],
+  [/\bwebstie\b/gi, "website"],
+  [/\bwebsit\b/gi, "website"],
+  [/\bbudjet\b/gi, "budget"],
   [/\bfacbook\b/gi, "facebook"],
   [/\bgoogel\b/gi, "google"],
   [/\blandng\b/gi, "landing"],
@@ -588,6 +592,7 @@ const VALUE_SPELLING_FIXES: Array<[RegExp, string]> = [
   [/\btomorow\b/gi, "tomorrow"],
   [/\btommorow\b/gi, "tomorrow"],
   [/\bmornig\b/gi, "morning"],
+  [/\bafter\s+(\d+)\s+month\b/gi, "after $1 months"],
   [/\bweeknd\b/gi, "weekend"],
   [/\baftr\b/gi, "after"],
   [/\bmnths\b/gi, "months"],

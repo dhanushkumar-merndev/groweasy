@@ -25,8 +25,9 @@ export default async function CampaignsPage() {
 
   const templateSummaries = templates.map((template) => {
     const templateImports = imports.filter((job) => job.template_id === template.id)
-    const savedRows = templateImports.reduce((total, job) => total + (job.final_saved_count || job.good_count), 0)
-    const lastUpdated = templateImports
+    const savedTemplateImports = templateImports.filter((job) => job.status === "saved")
+    const savedRows = savedTemplateImports.reduce((total, job) => total + job.final_saved_count, 0)
+    const lastUpdated = savedTemplateImports
       .map((job) => job.updated_at)
       .sort()
       .at(-1)

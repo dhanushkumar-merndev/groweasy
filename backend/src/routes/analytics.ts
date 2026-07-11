@@ -10,6 +10,8 @@ import { getUserDecryptedKey, shouldUseUserApiKey } from "./settings.js"
 const router = Router()
 const chartSuggestionTimeoutMs = Number(process.env.ANALYTICS_AI_TIMEOUT_MS ?? 15000)
 const chartSuggestionMaxTokens = Number(process.env.ANALYTICS_AI_MAX_TOKENS ?? 1200)
+const chartSuggestionMaxAttempts = Number(process.env.ANALYTICS_AI_MAX_ATTEMPTS ?? 2)
+const supportedChartTypes = ["line", "area", "bar", "vertical_bar", "horizontal_bar", "pie", "radar", "radial_bar"] as const
 
 router.post("/suggest-chart", async (req, res) => {
   try {
@@ -18,7 +20,7 @@ router.post("/suggest-chart", async (req, res) => {
     const suggestion = suggestChart(body.columns, body.sample_rows)
     const fallbackCharts = suggestChartLayout(body.columns, body.sample_rows, body.template_columns, body.column_profiles)
     const aiCharts = await suggestChartLayoutWithAi(user.id, body, fallbackCharts).catch((error) => {
-      logger.warn({ importId: body.import_id, error }, "AI chart suggestion failed, using deterministic fallback")
+      logger.warn({ importId: body.import_id, error: serializeAiError(error) }, "AI chart suggestion failed, using deterministic fallback")
       return null
     })
     const charts = aiCharts?.length ? aiCharts : fallbackCharts
@@ -75,7 +77,11 @@ async function suggestChartLayoutWithAi(
       "Use only columns listed in template_columns/columns.",
       "Every chart is a row count grouped by x_axis unless y_axis is a real numeric column.",
       "If a date/time column exists, include one wide line chart for lead count by that date.",
-      "Use horizontal_bar for many text groups, bar for status/source/owner comparisons, pie only for 2-5 strong categories.",
+      "Use horizontal_bar for many text groups, bar for status/source/owner comparisons, pie or radial_bar only for 2-5 strong categories, and radar for multi-axis dimensions.",
+      "Use diverse chart types. Prefer using each supported type at most once before repeating any type.",
+      "Supported chart types are line, area, bar, vertical_bar, horizontal_bar, pie, radar, and radial_bar.",
+      "Repeat a chart type only when there is no sensible unused type for the remaining useful columns.",
+      "If you repeat a chart type, the reason must explicitly explain why that repeated type is the best fit.",
       "Do not chart email, phone, mobile, ID, notes, or free-text description unless the profile shows useful repeated groups.",
       "Prefer business-useful CRM charts: created date trend, status/stage, source, owner, city, state, country, possession/time bucket.",
       "Avoid duplicate charts that explain the same idea.",
@@ -97,7 +103,7 @@ async function suggestChartLayoutWithAi(
         {
           id: "column_key_or_short_unique_id",
           title: "Short human title",
-          chart_type: "line | bar | pie | horizontal_bar | vertical_bar",
+          chart_type: "line | area | bar | pie | horizontal_bar | vertical_bar | radar | radial_bar",
           x_axis: "existing_column_key",
           y_axis: "count",
           layout: "wide | medium | compact",
@@ -107,7 +113,7 @@ async function suggestChartLayoutWithAi(
     },
   }
 
-  const content = await requestAiJson({
+  const content = await requestAiJsonWithRetry({
     ...request,
     system: [
       "You are an analytics designer for a CRM data-cleaning app.",
@@ -120,16 +126,16 @@ async function suggestChartLayoutWithAi(
   const parsed = parseAiChartResponse(content)
   if (!parsed?.charts?.length) return null
 
-  return parsed.charts
+  return diversifyChartTypes(parsed.charts
     .map((chart, index) => normalizeAiChart(chart, index, allowedColumns))
     .filter((chart): chart is ChartSuggestion => Boolean(chart))
-    .slice(0, 8)
+    .slice(0, 8))
 }
 
 async function buildAiRequest(userId: string) {
   const userKey = await shouldUseUserApiKey(userId) ? await getUserDecryptedKey(userId) : null
   const provider = normalizeProvider(userKey?.provider ?? process.env.ANALYTICS_AI_PROVIDER ?? process.env.PRIMARY_AI_PROVIDER ?? "groq")
-  const model = userKey?.model?.trim() || process.env.ANALYTICS_AI_MODEL?.trim() || process.env.PRIMARY_AI_MODEL?.trim() || (provider === "cloudflare" ? "@cf/google/gemma-4-26b-a4b-it" : provider === "commandcode" ? "deepseek/deepseek-v4-pro" : "openai/gpt-oss-120b")
+  const model = userKey?.model?.trim() || process.env.ANALYTICS_AI_MODEL?.trim() || process.env.PRIMARY_AI_MODEL?.trim() || (provider === "cloudflare" ? "@cf/google/gemma-4-26b-a4b-it" : provider === "commandcode" ? "deepseek/deepseek-v4-pro" : "qwen/qwen3.6-27b")
   const apiKey = userKey?.key || firstEnvKey(
     provider === "cloudflare"
       ? ["CLOUDFLARE_API", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY"]
@@ -144,50 +150,107 @@ async function buildAiRequest(userId: string) {
   return { provider, model, apiKey, baseUrl }
 }
 
+class AiRequestError extends Error {
+  status?: number
+
+  constructor(message: string, status?: number) {
+    super(message)
+    this.name = "AiRequestError"
+    this.status = status
+  }
+}
+
+async function requestAiJsonWithRetry(input: { provider: string; model: string; apiKey: string; baseUrl: string; system: string; user: string }) {
+  let lastError: unknown = null
+  const maxAttempts = Math.max(1, chartSuggestionMaxAttempts)
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await requestAiJson(input)
+    } catch (error) {
+      lastError = error
+      if (attempt >= maxAttempts || !shouldRetryAiRequest(error)) {
+        throw error
+      }
+
+      logger.warn({
+        attempt,
+        nextAttempt: attempt + 1,
+        provider: input.provider,
+        model: input.model,
+        error: serializeAiError(error),
+      }, "AI chart suggestion request failed, retrying")
+      await sleep(400 * attempt)
+    }
+  }
+
+  throw lastError
+}
+
 async function requestAiJson(input: { provider: string; model: string; apiKey: string; baseUrl: string; system: string; user: string }) {
   if (input.provider === "cloudflare") {
     return requestCloudflareAnalyticsJson(input)
   }
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), chartSuggestionTimeoutMs)
-  try {
-    const response = await fetch(`${input.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${input.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: input.model,
-        temperature: 0.1,
-        max_tokens: chartSuggestionMaxTokens,
-        response_format: { type: "json_object" },
-        ...getAnalyticsModelOptions(input.model),
-        messages: [
-          { role: "system", content: input.system },
-          { role: "user", content: input.user },
-        ],
-      }),
-    })
-    const text = await response.text()
-    if (!response.ok) {
-      throw new Error(`AI chart request failed with HTTP ${response.status}: ${text.slice(0, 300)}`)
+  const fetchChat = async (useJsonMode: boolean) => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), chartSuggestionTimeoutMs)
+    try {
+      const response = await fetch(`${input.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${input.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: input.model,
+          temperature: 0.1,
+          max_tokens: chartSuggestionMaxTokens,
+          response_format: useJsonMode ? { type: "json_object" } : undefined,
+          ...getAnalyticsModelOptions(input.model),
+          messages: [
+            { role: "system", content: input.system },
+            { role: "user", content: input.user },
+          ],
+        }),
+      })
+      const text = await response.text()
+      return { status: response.status, ok: response.ok, text }
+    } finally {
+      clearTimeout(timeout)
     }
-    const payload = JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> }
-    const content = payload.choices?.[0]?.message?.content
-    if (!content) throw new Error("AI chart response was empty")
-    return content
-  } finally {
-    clearTimeout(timeout)
   }
+
+  let result = await fetchChat(true)
+  if (!result.ok && result.status === 400 && shouldRetryWithoutResponseFormat(result.text)) {
+    logger.warn({ model: input.model }, "Model does not support json_object response format, retrying without response_format")
+    result = await fetchChat(false)
+  }
+
+  if (!result.ok) {
+    throw new AiRequestError(`AI chart request failed with HTTP ${result.status}: ${result.text.slice(0, 300)}`, result.status)
+  }
+
+  const payload = JSON.parse(result.text) as { choices?: Array<{ message?: { content?: string } }> }
+  const content = payload.choices?.[0]?.message?.content
+  if (!content) throw new AiRequestError("AI chart response was empty")
+  return content
+}
+
+function shouldRetryWithoutResponseFormat(errorText: string): boolean {
+  const message = errorText.toLowerCase()
+  return message.includes("response_format") ||
+    message.includes("json mode") ||
+    message.includes("response schema") ||
+    message.includes("only supports") ||
+    message.includes("unsupported")
 }
 
 async function requestCloudflareAnalyticsJson(input: { model: string; apiKey: string; system: string; user: string }) {
   const credential = parseCloudflareCredential(input.apiKey)
-  if (!credential) {
-    throw new Error("Cloudflare account id is required for analytics AI. Set CLOUDFLARE_ACCOUNT_ID or save key as accountId:token.")
+    if (!credential) {
+    throw new AiRequestError("Cloudflare account id is required for analytics AI. Set CLOUDFLARE_ACCOUNT_ID or save key as accountId:token.", 400)
   }
 
   const controller = new AbortController()
@@ -217,15 +280,40 @@ async function requestCloudflareAnalyticsJson(input: { model: string; apiKey: st
     }
     if (!response.ok) {
       const message = payload.error?.message || `Cloudflare analytics request failed with HTTP ${response.status}`
-      throw new Error(message)
+      throw new AiRequestError(message, response.status)
     }
 
     const content = payload.choices?.[0]?.message?.content
-    if (!content) throw new Error("Cloudflare analytics response was empty")
+    if (!content) throw new AiRequestError("Cloudflare analytics response was empty")
     return content
   } finally {
     clearTimeout(timeout)
   }
+}
+
+function shouldRetryAiRequest(error: unknown) {
+  const status = typeof error === "object" && error !== null && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : 0
+
+  if (!status) return true
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500
+}
+
+function serializeAiError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      status: "status" in error ? (error as { status?: unknown }).status : undefined,
+    }
+  }
+
+  return error
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function parseAiChartResponse(content: string): { charts?: unknown[] } | null {
@@ -263,9 +351,37 @@ function normalizeAiChart(chart: unknown, index: number, allowedColumns: Set<str
 
 function normalizeChartType(value: string): ChartType | null {
   const normalized = value.toLowerCase().replace(/[\s-]+/g, "_")
-  if (["line", "bar", "pie", "horizontal_bar", "vertical_bar", "area"].includes(normalized)) return normalized as ChartType
+  if (supportedChartTypes.includes(normalized as (typeof supportedChartTypes)[number])) return normalized as ChartType
   if (normalized === "donut" || normalized === "doughnut") return "pie"
   return null
+}
+
+function diversifyChartTypes(charts: ChartSuggestion[]) {
+  const byAxis = new Set<string>()
+  const deduped = charts.filter((chart) => {
+    const key = `${chart.x_axis}:${chart.chart_type}`
+    if (byAxis.has(key)) return false
+    byAxis.add(key)
+    return true
+  })
+
+  const seenTypes = new Set<ChartType>()
+  const uniqueTypes: ChartSuggestion[] = []
+  const repeats: ChartSuggestion[] = []
+
+  for (const chart of deduped) {
+    if (seenTypes.has(chart.chart_type)) {
+      repeats.push({
+        ...chart,
+        reason: chart.reason || `Repeated ${chart.chart_type.replace(/_/g, " ")} because this column fits that chart type best.`,
+      })
+    } else {
+      seenTypes.add(chart.chart_type)
+      uniqueTypes.push(chart)
+    }
+  }
+
+  return [...uniqueTypes, ...repeats].slice(0, 8)
 }
 
 function normalizeLayout(value: string): ChartSuggestion["layout"] {
@@ -360,14 +476,14 @@ function suggestChartLayout(
       })
   const labelByKey = new Map(templateColumns.map((column) => [column.key, column.label]))
 
-  return profiles
+  const candidates = profiles
     .filter((profile) => profile.unique_count > 1 && profile.filled_count > 0)
     .filter((profile) => !["contact", "identity"].includes(profile.kind))
     .sort((a, b) => chartRank(a.kind) - chartRank(b.kind) || b.filled_count - a.filled_count)
     .slice(0, 6)
-    .map((profile) => {
+    .map((profile, index) => {
       const label = labelByKey.get(profile.key) ?? profile.label
-      const chartType = chartTypeForProfile(profile.kind, profile.unique_count)
+      const chartType = chartTypeForProfile(profile.kind, profile.unique_count, index)
 
       return {
         id: profile.key,
@@ -379,13 +495,16 @@ function suggestChartLayout(
         reason: `Mapped from ${labelize(label)} because it has ${profile.unique_count} useful groups.`,
       }
     })
+
+  return diversifyChartTypes(candidates)
 }
 
-function chartTypeForProfile(kind: string, uniqueCount: number): ChartType {
-  if (kind === "time") return "line"
-  if (kind === "measure") return "bar"
-  if (uniqueCount <= 5) return "pie"
-  return "horizontal_bar"
+function chartTypeForProfile(kind: string, uniqueCount: number, index: number): ChartType {
+  if (kind === "time") return index === 0 ? "line" : "area"
+  if (kind === "measure") return index % 2 === 0 ? "bar" : "vertical_bar"
+  if (uniqueCount <= 5) return index % 2 === 0 ? "pie" : "radial_bar"
+  if (uniqueCount > 5 && uniqueCount <= 8) return index % 2 === 0 ? "radar" : "horizontal_bar"
+  return index % 2 === 0 ? "horizontal_bar" : "vertical_bar"
 }
 
 function layoutForProfile(kind: string, uniqueCount: number): ChartSuggestion["layout"] {

@@ -91,6 +91,10 @@ function formatExpiry(value?: string) {
   })}`
 }
 
+function getAvatarSrc(value?: string | null) {
+  return value?.trim() || undefined
+}
+
 function buildRows(user: CurrentUser, sessions: DeviceSession[]): SessionRow[] {
   const currentFromDevice = sessions.find((item) => item.user.id === user.id)
   const current: SessionRow = {
@@ -138,6 +142,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
   const [adding, setAdding] = React.useState(false)
 
   const rows = React.useMemo(() => buildRows(user, sessions), [sessions, user])
+  const userAvatarSrc = getAvatarSrc(user.image)
   const sessionLimitReached = rows.length >= MAX_DEVICE_SESSIONS
   const showSkeleton = loading && sessions.length === 0
 
@@ -267,6 +272,35 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
     }
   }
 
+  async function logoutAll() {
+    try {
+      const deviceSessions = await fetchDeviceSessions()
+      for (const item of deviceSessions) {
+        if (item.session.token) {
+          await fetch(`${API_BASE}/api/auth/multi-session/revoke`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionToken: item.session.token }),
+            credentials: "include",
+          })
+        }
+      }
+    } catch {
+      // best-effort
+    }
+
+    try {
+      await fetch(`${API_BASE}/api/auth/sign-out`, {
+        method: "POST",
+        credentials: "include",
+      })
+    } catch {
+      // best-effort
+    }
+
+    window.location.assign("/login")
+  }
+
   return (
     <>
       <SidebarMenu>
@@ -281,7 +315,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
               }
             >
               <Avatar className="size-8 rounded-lg">
-                <AvatarImage src={user.image ?? undefined} alt={user.name} />
+                <AvatarImage src={userAvatarSrc} alt={user.name} referrerPolicy="no-referrer" />
                 <AvatarFallback className="rounded-lg bg-muted text-xs font-semibold text-foreground">
                   {getInitials(user.name, user.email)}
                 </AvatarFallback>
@@ -296,7 +330,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
                 <DropdownMenuLabel className="p-0 font-normal">
                   <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                     <Avatar className="size-8 rounded-lg">
-                      <AvatarImage src={user.image ?? undefined} alt={user.name} />
+                      <AvatarImage src={userAvatarSrc} alt={user.name} referrerPolicy="no-referrer" />
                       <AvatarFallback className="rounded-lg bg-muted text-xs font-semibold">
                         {getInitials(user.name, user.email)}
                       </AvatarFallback>
@@ -345,7 +379,10 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
                     <Skeleton className="h-7 w-16 rounded-md" />
                   </div>
                 ))
-              : rows.map((row) => (
+              : rows.map((row) => {
+                  const rowAvatarSrc = getAvatarSrc(row.image)
+
+                  return (
                   <div
                     key={row.id}
                     className={cn(
@@ -365,7 +402,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
                     }}
                   >
                     <Avatar className="size-9 rounded-lg">
-                      <AvatarImage src={row.image ?? undefined} alt={row.name} />
+                      <AvatarImage src={rowAvatarSrc} alt={row.name} referrerPolicy="no-referrer" />
                       <AvatarFallback className="rounded-lg bg-muted text-xs font-semibold">
                         {getInitials(row.name, row.email)}
                       </AvatarFallback>
@@ -398,19 +435,32 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
                       </Button>
                     )}
                   </div>
-                ))}
+                  )
+                })}
           </div>
 
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full justify-center"
-            disabled={user.isDemo || adding || sessionLimitReached}
-            onClick={() => void addAccount()}
-          >
-            {adding ? <Loader2Icon className="size-4 animate-spin" /> : <PlusIcon className="size-4" />}
-            {sessionLimitReached ? "5 accounts added" : "Add Google account"}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1 justify-center"
+              disabled={user.isDemo || adding || sessionLimitReached}
+              onClick={() => void addAccount()}
+            >
+              {adding ? <Loader2Icon className="size-4 animate-spin" /> : <PlusIcon className="size-4" />}
+              {sessionLimitReached ? "5 accounts added" : "Add account"}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="icon"
+              disabled={user.isDemo || rows.length <= 1}
+              onClick={() => void logoutAll()}
+              title="Logout all accounts"
+            >
+              <LogOutIcon className="size-4" />
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </>

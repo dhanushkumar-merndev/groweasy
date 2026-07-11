@@ -30,9 +30,9 @@ export function ReviewWorkspace({
   )
   const summary = useMemo(() => summarizeReviewRows(editableRows), [editableRows])
 
-  useEffect(() => {
-    setDraftRows(readReviewDraft(importId, sourceSignature) ?? rows)
-  }, [importId, rows, sourceSignature])
+  // Draft restoration is handled by the useState initializer.
+  // The component unmounts/remounts on importId change (Next.js App Router page navigation),
+  // so the initializer always runs with the correct props.
 
   useEffect(() => {
     try {

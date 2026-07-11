@@ -2,12 +2,11 @@
 
 import { useTransition } from "react"
 import { toast } from "sonner"
-import Link from "next/link"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { GoogleIcon } from "@/components/icons/google-icon"
 import { API_BASE } from "@/lib/api-client"
 import { cn } from "@/lib/utils"
-import { FileSpreadsheetIcon, ShieldAlertIcon, SparklesIcon, ArrowRightIcon } from "lucide-react"
+import { FileSpreadsheetIcon, ShieldAlertIcon } from "lucide-react"
 
 export function LoginForm({
   className,
@@ -100,20 +99,6 @@ export function LoginForm({
             {isPending ? "Connecting..." : "Sign in with Google"}
           </Button>
 
-          {/* Continue in Demo Mode Action */}
-          {!authConfigured ? (
-            <Link
-              href="/dashboard"
-              className={cn(
-                buttonVariants({ variant: "default" }),
-                "w-full py-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-zinc-950 font-bold transition-all shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:scale-[1.01] flex items-center justify-center gap-1.5"
-              )}
-            >
-              <SparklesIcon className="size-4" />
-              Continue in Demo Mode
-              <ArrowRightIcon className="size-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
-            </Link>
-          ) : null}
         </div>
       </form>
 

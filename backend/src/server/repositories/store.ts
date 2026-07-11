@@ -105,6 +105,10 @@ function persistState() {
   }
 }
 
+function normalizeHintKey(value: string) {
+  return value.trim().toLowerCase().replace(/[_\W]+/g, " ")
+}
+
 async function syncSavedRowsToSupabase(userId: string, importId: string, savedRows: SavedRow[]) {
   const supabase = getSupabaseServiceClient()
 
@@ -223,6 +227,117 @@ async function ensureTemplateInSupabase(userId: string, templateId: string) {
     logger.error({ error, templateId }, "Failed to ensure template exists in Supabase")
     throw error
   }
+}
+
+async function listTemplatesFromSupabase(userId: string) {
+  const supabase = getSupabaseServiceClient()
+
+  if (!supabase) {
+    return []
+  }
+
+  const { data, error } = await supabase
+    .from("templates")
+    .select("*")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false })
+
+  if (error) {
+    logger.error({ error, userId }, "Failed to list templates from Supabase")
+    throw error
+  }
+
+  return (data ?? []).map(normalizeTemplateRow)
+}
+
+async function getTemplateFromSupabase(userId: string, templateId: string) {
+  const supabase = getSupabaseServiceClient()
+
+  if (!supabase) {
+    return null
+  }
+
+  const { data, error } = await supabase
+    .from("templates")
+    .select("*")
+    .eq("id", templateId)
+    .eq("user_id", userId)
+    .maybeSingle()
+
+  if (error) {
+    logger.error({ error, userId, templateId }, "Failed to get template from Supabase")
+    throw error
+  }
+
+  return data ? normalizeTemplateRow(data) : null
+}
+
+async function syncTemplateToSupabase(template: Template) {
+  const supabase = getSupabaseServiceClient()
+
+  if (!supabase) {
+    return
+  }
+
+  const { error } = await supabase
+    .from("templates")
+    .upsert({
+      id: template.id,
+      user_id: template.user_id,
+      name: template.name,
+      columns_config: template.columns_config,
+      formatting_rules: template.formatting_rules,
+      created_at: template.created_at,
+      updated_at: template.updated_at,
+    }, { onConflict: "id" })
+
+  if (error) {
+    logger.error({ error, templateId: template.id }, "Failed to sync template to Supabase")
+    throw error
+  }
+}
+
+async function deleteTemplateFromSupabase(userId: string, templateId: string) {
+  const supabase = getSupabaseServiceClient()
+
+  if (!supabase) {
+    return false
+  }
+
+  const { error } = await supabase
+    .from("templates")
+    .delete()
+    .eq("id", templateId)
+    .eq("user_id", userId)
+
+  if (error) {
+    logger.error({ error, userId, templateId }, "Failed to delete template from Supabase")
+    throw error
+  }
+
+  return true
+}
+
+function normalizeTemplateRow(row: Record<string, any>): Template {
+  const now = new Date().toISOString()
+
+  return {
+    id: String(row.id),
+    user_id: String(row.user_id),
+    name: String(row.name ?? "Untitled template"),
+    columns_config: Array.isArray(row.columns_config) ? row.columns_config : [],
+    formatting_rules: row.formatting_rules && typeof row.formatting_rules === "object" ? row.formatting_rules : {},
+    created_at: String(row.created_at ?? now),
+    updated_at: String(row.updated_at ?? row.created_at ?? now),
+  }
+}
+
+function cacheUserTemplates(userId: string, templates: Template[]) {
+  state.templates = [
+    ...templates,
+    ...state.templates.filter((template) => template.user_id !== userId),
+  ]
+  persistState()
 }
 
 async function listImportsFromSupabase(userId: string) {
@@ -358,15 +473,46 @@ ensureSchema()
 
 export const store = {
   listTemplates(userId: string) {
-    const templates = state.templates.filter((template) => template.user_id === userId || template.user_id === demoUserId)
+    const templates = state.templates
+      .filter((template) => template.user_id === userId || template.user_id === demoUserId)
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
     logger.debug({ userId, count: templates.length }, "List templates")
     return templates
+  },
+
+  async listTemplatesForUser(userId: string) {
+    const dbTemplates = await listTemplatesFromSupabase(userId)
+    const demoTemplates = state.templates.filter((t) => t.user_id === demoUserId)
+
+    if (dbTemplates.length > 0) {
+      cacheUserTemplates(userId, dbTemplates)
+      return [...dbTemplates, ...demoTemplates].sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+      )
+    }
+
+    return this.listTemplates(userId)
   },
 
   getTemplate(userId: string, id: string) {
     const template = this.listTemplates(userId).find((template) => template.id === id) ?? null
     logger.debug({ userId, templateId: id, found: template !== null }, "Get template")
     return template
+  },
+
+  async getTemplateForUser(userId: string, id: string) {
+    const dbTemplate = await getTemplateFromSupabase(userId, id)
+
+    if (dbTemplate) {
+      cacheUserTemplates(userId, [
+        dbTemplate,
+        ...state.templates.filter((template) => template.user_id === userId && template.id !== id),
+      ])
+      logger.debug({ userId, templateId: id, source: "supabase" }, "Get template")
+      return dbTemplate
+    }
+
+    return this.getTemplate(userId, id)
   },
 
   upsertTemplate(userId: string, input: Omit<Template, "user_id" | "created_at" | "updated_at"> & Partial<Pick<Template, "created_at" | "updated_at">>) {
@@ -391,12 +537,91 @@ export const store = {
     return template
   },
 
+  async upsertTemplateForUser(userId: string, input: Omit<Template, "user_id" | "created_at" | "updated_at"> & Partial<Pick<Template, "created_at" | "updated_at">>) {
+    const template = this.upsertTemplate(userId, input)
+    await syncTemplateToSupabase(template)
+    return template
+  },
+
+  async addTemplateSourceHints(userId: string, templateId: string, hintsByColumnKey: Record<string, string[]>) {
+    const dbTemplate = await getTemplateFromSupabase(userId, templateId)
+
+    if (dbTemplate) {
+      cacheUserTemplates(userId, [
+        dbTemplate,
+        ...state.templates.filter((template) => template.user_id === userId && template.id !== templateId),
+      ])
+    }
+
+    const index = state.templates.findIndex((template) => template.id === templateId && template.user_id === userId)
+
+    if (index < 0) {
+      logger.debug({ userId, templateId }, "Template not eligible for learned source hints")
+      return null
+    }
+
+    const existing = state.templates[index]
+    let added = 0
+    const now = new Date().toISOString()
+    const columns_config = existing.columns_config.map((column) => {
+      const learnedHints = hintsByColumnKey[column.key] ?? []
+
+      if (learnedHints.length === 0) {
+        return column
+      }
+
+      const currentHints = column.source_hints ?? []
+      const seen = new Set(currentHints.map(normalizeHintKey))
+      const nextHints = [...currentHints]
+
+      for (const hint of learnedHints) {
+        const normalized = normalizeHintKey(hint)
+
+        if (!normalized || seen.has(normalized)) {
+          continue
+        }
+
+        seen.add(normalized)
+        nextHints.push(hint)
+        added += 1
+      }
+
+      return {
+        ...column,
+        source_hints: nextHints.slice(0, 24),
+      }
+    })
+
+    if (added === 0) {
+      return existing
+    }
+
+    const updated: Template = {
+      ...existing,
+      columns_config,
+      updated_at: now,
+    }
+
+    state.templates[index] = updated
+    persistState()
+    await syncTemplateToSupabase(updated)
+    logger.info({ userId, templateId, added }, "Learned source hints added to template")
+
+    return updated
+  },
+
   deleteTemplate(userId: string, id: string) {
     const before = state.templates.length
     state.templates = state.templates.filter((template) => !(template.id === id && template.user_id === userId))
     const deleted = state.templates.length < before
     logger.info({ userId, templateId: id, deleted }, "Delete template")
     if (deleted) persistState()
+    return deleted
+  },
+
+  async deleteTemplateForUser(userId: string, id: string) {
+    const deleted = this.deleteTemplate(userId, id)
+    await deleteTemplateFromSupabase(userId, id)
     return deleted
   },
 
@@ -407,12 +632,6 @@ export const store = {
   },
 
   async listImportsForUser(userId: string) {
-    const localJobs = this.listImports(userId)
-
-    if (localJobs.length > 0) {
-      return localJobs
-    }
-
     const dbJobs = await listImportsFromSupabase(userId)
 
     if (dbJobs.length > 0) {
@@ -422,6 +641,7 @@ export const store = {
       return dbJobs
     }
 
+    const localJobs = this.listImports(userId)
     return localJobs
   },
 
@@ -534,13 +754,6 @@ export const store = {
   },
 
   async listSavedRows(userId: string, importId: string) {
-    const rows = state.savedRows.filter((row) => row.import_id === importId && (row.user_id === userId || row.user_id === demoUserId))
-
-    if (rows.length > 0) {
-      logger.debug({ userId, importId, count: rows.length }, "List saved rows")
-      return rows
-    }
-
     const dbRows = await listSavedRowsFromSupabase(userId, importId)
 
     if (dbRows.length > 0) {
@@ -550,18 +763,18 @@ export const store = {
       return dbRows
     }
 
+    const rows = state.savedRows.filter((row) => row.import_id === importId && (row.user_id === userId || row.user_id === demoUserId))
+
+    if (rows.length > 0) {
+      logger.debug({ userId, importId, count: rows.length, source: "local-fallback" }, "List saved rows")
+      return rows
+    }
+
     logger.debug({ userId, importId, count: 0 }, "List saved rows")
     return []
   },
 
   async listAllSavedRows(userId: string) {
-    const rows = state.savedRows.filter((row) => row.user_id === userId || row.user_id === demoUserId)
-
-    if (rows.length > 0) {
-      logger.debug({ userId, count: rows.length }, "List all saved rows")
-      return rows
-    }
-
     const dbRows = await listSavedRowsFromSupabase(userId)
 
     if (dbRows.length > 0) {
@@ -569,6 +782,13 @@ export const store = {
       state.savedRows = [...dbRows, ...state.savedRows.filter((row) => row.user_id !== userId)]
       persistState()
       return dbRows
+    }
+
+    const rows = state.savedRows.filter((row) => row.user_id === userId || row.user_id === demoUserId)
+
+    if (rows.length > 0) {
+      logger.debug({ userId, count: rows.length, source: "local-fallback" }, "List all saved rows")
+      return rows
     }
 
     logger.debug({ userId, count: 0 }, "List all saved rows")

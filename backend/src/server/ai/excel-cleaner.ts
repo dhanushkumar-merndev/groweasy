@@ -6,6 +6,7 @@ import {
   getMissingFieldsForTemplate,
   isEssentialField,
   normalizeKey,
+  normalizeTextSpelling,
   sanitizeCellValue,
 } from "../../lib/formatting.js"
 import type { AiBatchResult, CleanedRow, ImportSheet, RawImportRow, Template } from "../../lib/types.js"
@@ -1221,6 +1222,23 @@ function finalizeCleanedRow(
   const cleanedData = { ...row.cleaned_data }
   let changes = [...row.ai_changes]
   const descriptionKey = getDescriptionColumnKey(template)
+
+  if (options.correctSpelling) {
+    for (const column of template.columns_config) {
+      const before = stringifyCell(cleanedData[column.key])
+      const after = normalizeTextSpelling(before, column)
+
+      if (before && after && before !== after) {
+        cleanedData[column.key] = after
+        changes = addChangeOnce(changes, {
+          field: column.key,
+          before,
+          after,
+          reason: "Fixed spelling.",
+        })
+      }
+    }
+  }
 
   if (options.generateDescription && descriptionKey && !hasText(cleanedData[descriptionKey])) {
     const generatedDescription = generateLocalDescription(cleanedData, template)

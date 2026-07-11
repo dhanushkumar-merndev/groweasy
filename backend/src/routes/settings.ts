@@ -53,9 +53,11 @@ router.post("/apikey", async (req, res) => {
       provider,
       model,
       encrypted_api_key: encrypted,
+      use_user_api_key: true,
     })
     const legacyEncrypted = encrypt(JSON.stringify({ provider, model, key: actualKey }))
     store.setApiKey(user.id, legacyEncrypted)
+    store.setUseUserApiKey(user.id, true)
     logger.info({ userId: user.id, provider, model }, "API key saved")
     return jsonOk(res, { message: "API key saved" })
   } catch (error) {
@@ -107,10 +109,14 @@ router.get("/apikey", async (req, res) => {
     const settings = await getDbUserAiSettings(user.id)
     const legacyRaw = store.getApiKey(user.id)
     const useUserApiKey = settings?.use_user_api_key ?? store.getUseUserApiKey(user.id)
-    if (!settings?.encrypted_api_key && !legacyRaw) return jsonOk(res, { hasKey: false, useUserApiKey })
+    if (!settings?.encrypted_api_key && !legacyRaw) {
+      return jsonOk(res, { hasKey: false, isActive: false, useUserApiKey })
+    }
     const legacyInfo = legacyRaw ? await getUserDecryptedKey(user.id) : null
+    const hasKey = Boolean(settings?.encrypted_api_key || legacyRaw)
     return jsonOk(res, {
-      hasKey: true,
+      hasKey,
+      isActive: Boolean(hasKey && useUserApiKey),
       maskedKey: "********",
       provider: normalizeSupportedProvider(settings?.provider ?? legacyInfo?.provider ?? "cloudflare"),
       model: settings?.model ?? legacyInfo?.model ?? "@cf/google/gemma-4-26b-a4b-it",
@@ -162,7 +168,10 @@ router.post("/ai", async (req, res) => {
       request_batch_size: settings.requestBatchSize,
     })
     store.setAiSettings(user.id, settings)
-    return jsonOk(res, { settings, limits: AI_BATCH_LIMITS })
+    return jsonOk(res, {
+      settings: await getUserAiSettings(user.id),
+      limits: AI_BATCH_LIMITS,
+    })
   } catch (error) {
     return handleRouteError(res, error)
   }
@@ -197,6 +206,23 @@ export async function getUserDecryptedKey(userId: string): Promise<{ provider: s
 export async function shouldUseUserApiKey(userId: string) {
   const settings = await getDbUserAiSettings(userId)
   return settings?.use_user_api_key ?? store.getUseUserApiKey(userId)
+}
+
+export async function hasActiveUserApiKey(userId: string) {
+  const [useUserKey, userKey] = await Promise.all([
+    shouldUseUserApiKey(userId),
+    getUserDecryptedKey(userId),
+  ])
+
+  logger.debug({
+    userId,
+    useUserKey,
+    hasUserKey: Boolean(userKey?.key),
+    provider: userKey?.provider,
+    model: userKey?.model,
+  }, "Resolved active user API key")
+
+  return Boolean(useUserKey && userKey?.key)
 }
 
 async function getActiveAiProfile(userId: string) {

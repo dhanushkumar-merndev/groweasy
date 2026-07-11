@@ -148,6 +148,8 @@ export const chartTypeSchema = z.enum([
   "horizontal_bar",
   "vertical_bar",
   "area",
+  "radar",
+  "radial_bar",
 ]) satisfies z.ZodType<ChartType>
 
 export const analyticsSuggestSchema = z.object({

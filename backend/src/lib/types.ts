@@ -207,6 +207,9 @@ export type ChartType =
   | "horizontal_bar"
   | "vertical_bar"
   | "area"
+  | "radar"
+  | "radial_bar"
+
 
 export type AnalyticsConfig = {
   import_id: string

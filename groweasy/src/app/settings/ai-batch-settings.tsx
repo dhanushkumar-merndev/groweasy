@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { EyeIcon, GaugeIcon, LoaderIcon, SaveIcon } from "lucide-react"
 import { toast } from "sonner"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -37,20 +38,19 @@ type BatchRecommendation = {
 }
 
 type SettingsResponse = {
-  data?: {
-    settings: BatchSettings
-    limits: BatchLimits
-    activeProfile: ActiveProfile
-    recommendation: BatchRecommendation
-    groqReference: {
-      free: { rpm: number; rpd: number; tpm: number; note: string }
-      developer: { rpm: number; tpm: number; note: string }
-    }
+  settings: BatchSettings
+  limits: BatchLimits
+  activeProfile: ActiveProfile
+  recommendation: BatchRecommendation
+  groqReference: {
+    free: { rpm: number; rpd: number; tpm: number; note: string }
+    developer: { rpm: number; tpm: number; note: string }
   }
 }
 
 export function AiBatchSettings() {
   const [settings, setSettings] = useState<BatchSettings>({ batchSize: 15, requestBatchSize: 15, detailedReviewEnabled: true })
+  const [savedSettings, setSavedSettings] = useState<BatchSettings | null>(null)
   const [limits, setLimits] = useState<BatchLimits | null>(null)
   const [activeProfile, setActiveProfile] = useState<ActiveProfile | null>(null)
   const [recommendation, setRecommendation] = useState<BatchRecommendation | null>(null)
@@ -64,17 +64,18 @@ export function AiBatchSettings() {
       api("/settings/ai")
         .then((r) => r.json())
         .then((payload: SettingsResponse) => {
-          if (payload.data?.settings) {
-            setSettings(payload.data.settings)
+          if (payload.settings) {
+            setSettings(payload.settings)
+            setSavedSettings(payload.settings)
           }
-          if (payload.data?.limits) {
-            setLimits(payload.data.limits)
+          if (payload.limits) {
+            setLimits(payload.limits)
           }
-          if (payload.data?.activeProfile) {
-            setActiveProfile(payload.data.activeProfile)
+          if (payload.activeProfile) {
+            setActiveProfile(payload.activeProfile)
           }
-          if (payload.data?.recommendation) {
-            setRecommendation(payload.data.recommendation)
+          if (payload.recommendation) {
+            setRecommendation(payload.recommendation)
           }
         })
         .finally(() => setLoading(false))
@@ -90,6 +91,9 @@ export function AiBatchSettings() {
     batchSize: { min: 5, max: 100, default: 15 },
     requestBatchSize: { min: 1, max: 30, default: 15 },
   }
+  const hasBatchChanges = savedSettings
+    ? settings.batchSize !== savedSettings.batchSize || settings.requestBatchSize !== savedSettings.requestBatchSize
+    : false
 
   function updateSetting(key: BatchNumberSetting, value: number) {
     setSettings((current) => {
@@ -124,8 +128,17 @@ export function AiBatchSettings() {
 
     if (res.ok) {
       const payload: SettingsResponse = await res.json()
-      if (payload.data?.settings) {
-        setSettings(payload.data.settings)
+      if (payload.settings) {
+        setSettings((current) => ({
+          ...current,
+          ...payload.settings,
+          detailedReviewEnabled: payload.settings.detailedReviewEnabled ?? current.detailedReviewEnabled,
+        }))
+        setSavedSettings((current) => ({
+          ...(current ?? settings),
+          ...payload.settings,
+          detailedReviewEnabled: payload.settings.detailedReviewEnabled ?? current?.detailedReviewEnabled ?? settings.detailedReviewEnabled,
+        }))
       }
       toast.success("AI batch settings saved")
     } else {
@@ -136,6 +149,7 @@ export function AiBatchSettings() {
 
   async function handleReviewModeChange(enabled: boolean) {
     setSettings((current) => ({ ...current, detailedReviewEnabled: enabled }))
+    setSavedSettings((current) => current ? { ...current, detailedReviewEnabled: enabled } : current)
     setSavingReviewMode(true)
     const res = await api("/settings/review-mode", {
       method: "POST",
@@ -149,6 +163,7 @@ export function AiBatchSettings() {
       window.dispatchEvent(new Event("ai-settings-changed"))
     } else {
       setSettings((current) => ({ ...current, detailedReviewEnabled: !enabled }))
+      setSavedSettings((current) => current ? { ...current, detailedReviewEnabled: !enabled } : current)
       const err = await res.json().catch(() => ({}))
       toast.error(err?.error ?? "Failed to save review mode")
     }
@@ -169,19 +184,26 @@ export function AiBatchSettings() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <GaugeIcon className="size-4" />
-          AI batch tuning
-        </CardTitle>
-        <CardDescription>
-          {activeProfile
-            ? `${activeProfile.source === "user" ? "User" : "Default"} model: ${activeProfile.model}`
-            : "Tune rows per request for the active AI model."}
-        </CardDescription>
+    <Card className="overflow-hidden py-0">
+      <CardHeader className="flex flex-row items-start justify-between gap-3 border-b px-5 py-4">
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <GaugeIcon className="size-4" />
+            AI batch tuning
+          </CardTitle>
+          <CardDescription className="mt-1 truncate text-xs">
+            {activeProfile
+              ? `${activeProfile.source === "user" ? "User" : "Default"} model: ${activeProfile.model}`
+              : "Tune rows per request for the active AI model."}
+          </CardDescription>
+        </div>
+        {!loading ? (
+          <Badge variant={settings.detailedReviewEnabled ? "secondary" : "default"}>
+            {settings.detailedReviewEnabled ? "Detailed" : "Compact"}
+          </Badge>
+        ) : null}
       </CardHeader>
-      <CardContent className="grid gap-5">
+      <CardContent className="grid gap-4 p-5">
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <LoaderIcon className="size-4 animate-spin" />
@@ -189,17 +211,17 @@ export function AiBatchSettings() {
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 p-4">
+            <div className="flex items-center justify-between gap-4 rounded-md border bg-muted/15 px-4 py-3">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="grid size-9 place-items-center rounded-md bg-primary/10 text-primary">
+                <div className="grid size-8 place-items-center rounded-md bg-primary/10 text-primary">
                   <EyeIcon className="size-4" />
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-medium">Detailed review visuals</div>
-                  <p className="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
+                  <p className="mt-0.5 text-xs text-muted-foreground">
                     {settings.detailedReviewEnabled
-                      ? "Uses more AI tokens, but gives better reasoning with field-level change reasons."
-                      : "Uses fewer AI tokens by returning only final CRM row data, without change reasons."}
+                      ? "Shows field-level change reasons in review."
+                      : "Returns final CRM data without change reasons."}
                   </p>
                 </div>
               </div>
@@ -215,12 +237,12 @@ export function AiBatchSettings() {
               </button>
             </div>
             {!settings.detailedReviewEnabled ? (
-              <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-muted-foreground">
-                Compact mode reduces response tokens by skipping AI change explanations. Good/Missing/Skipped still works.
+              <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                Compact mode uses fewer output tokens. Good, Missing, and Skipped still work.
               </div>
             ) : null}
             {activeProfile?.source !== "user" ? (
-              <div className="rounded-lg border bg-muted/20 p-4">
+              <div className="rounded-md border bg-muted/15 px-4 py-3">
                 <div className="text-sm font-medium">Default backend model is fixed</div>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Turn on “Use my API key” to tune rows per AI request for your selected model.
@@ -229,18 +251,21 @@ export function AiBatchSettings() {
             ) : (
               <>
             {recommendation ? (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+              <div className="rounded-md border bg-muted/15 px-4 py-3">
                 <div className="min-w-0">
-                  <div className="text-sm font-medium">{recommendation.label} sweet spot</div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {recommendation.requestBatchSize} rows per AI request. {recommendation.note}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium">{recommendation.label}</div>
+                    <Button type="button" size="sm" variant="outline" onClick={applyRecommendation}>
+                      Apply
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Recommended {recommendation.requestBatchSize} rows/request. {recommendation.note}
                   </p>
                 </div>
-                <Button type="button" variant="outline" onClick={applyRecommendation}>
-                  Apply
-                </Button>
               </div>
             ) : null}
+            <div className="rounded-md border p-4">
             <BatchControl
               label="Rows per AI request"
               value={settings.requestBatchSize}
@@ -252,15 +277,16 @@ export function AiBatchSettings() {
                 updateSetting("batchSize", value)
               }}
             />
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-              <span>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/15 px-3 py-2 text-sm text-muted-foreground">
+              <span className="text-xs">
                 {activeProfile?.source === "user"
                   ? "This tuning is for your selected user model."
                   : "This tuning is for the default backend model."}
               </span>
-              <Button onClick={handleSave} disabled={saving}>
+              <Button onClick={handleSave} disabled={saving || !hasBatchChanges}>
                 <SaveIcon />
-                {saving ? "Saving..." : "Save tuning"}
+                {saving ? "Saving..." : hasBatchChanges ? "Save tuning" : "Saved"}
               </Button>
             </div>
               </>

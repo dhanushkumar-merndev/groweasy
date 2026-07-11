@@ -5,6 +5,7 @@ import { logger } from "../../lib/logger.js"
 
 const TTL_SECONDS = 86_400
 const VERSION = "v1"
+export const AUTH_USER_CACHE_TTL_SECONDS = 1_800
 
 type MemoryRecord = {
   expiresAt: number
@@ -124,4 +125,8 @@ export function cacheKeys(importId: string) {
     batch: (batchNo: number) => `import:${importId}:batch:${batchNo}:v1`,
     analytics: (filterHash: string) => `analytics:${importId}:${filterHash}:v1`,
   }
+}
+
+export function authUserCacheKey(sessionHash: string) {
+  return `auth:user:${sessionHash}:v1`
 }

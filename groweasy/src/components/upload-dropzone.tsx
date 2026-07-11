@@ -31,6 +31,12 @@ import type { Template } from "@/lib/types"
 
 const DEFAULT_API_ROW_LIMIT = 10
 
+type ApiKeyStatusResponse = {
+  hasKey?: boolean
+  isActive?: boolean
+  useUserApiKey?: boolean
+}
+
 /* ─── Main component ───────────────────────────────────────────────── */
 export function UploadDropzone({
   templates,
@@ -114,18 +120,24 @@ export function UploadDropzone({
   useEffect(() => {
     let cancelled = false
 
-    api("/settings/apikey")
-      .then((response) => response.json())
-      .then((data) => {
-        if (cancelled) return
-        setHasActiveUserApiKey(Boolean(data.data?.hasKey && data.data?.useUserApiKey))
-      })
-      .catch(() => {
-        if (!cancelled) setHasActiveUserApiKey(false)
-      })
+    function loadApiKeyStatus() {
+      api("/settings/apikey")
+        .then((response) => response.json())
+        .then((data: ApiKeyStatusResponse) => {
+          if (cancelled) return
+          setHasActiveUserApiKey(Boolean(data.isActive ?? (data.hasKey && data.useUserApiKey)))
+        })
+        .catch(() => {
+          if (!cancelled) setHasActiveUserApiKey(false)
+        })
+    }
+
+    loadApiKeyStatus()
+    window.addEventListener("ai-settings-changed", loadApiKeyStatus)
 
     return () => {
       cancelled = true
+      window.removeEventListener("ai-settings-changed", loadApiKeyStatus)
     }
   }, [])
 

@@ -13,7 +13,7 @@ router.get("/", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     logger.info({ userId: user.id }, "List templates")
-    return jsonOk(res, { templates: store.listTemplates(user.id) })
+    return jsonOk(res, { templates: await store.listTemplatesForUser(user.id) })
   } catch (error) {
     return handleRouteError(res, error)
   }
@@ -23,7 +23,15 @@ router.post("/", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const body = parseJsonBody(req.body, templateInputSchema)
-    const template = store.upsertTemplate(user.id, {
+
+    const nameTaken = (await store.listTemplatesForUser(user.id)).some(
+      (t) => t.name.toLowerCase().trim() === body.name.toLowerCase().trim()
+    )
+    if (nameTaken) {
+      return jsonError(res, "TEMPLATE_NAME_EXISTS", "A template with this name already exists.", 409)
+    }
+
+    const template = await store.upsertTemplateForUser(user.id, {
       id: crypto.randomUUID(),
       ...body,
     })
@@ -39,7 +47,7 @@ router.get("/:id", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { id } = req.params
-    const template = store.getTemplate(user.id, id)
+    const template = await store.getTemplateForUser(user.id, id)
 
     if (!template) {
       return jsonOk(res, { template: null })
@@ -55,7 +63,7 @@ router.patch("/:id", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { id } = req.params
-    const existing = store.getTemplate(user.id, id)
+    const existing = await store.getTemplateForUser(user.id, id)
 
     if (!existing) {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)
@@ -66,7 +74,15 @@ router.patch("/:id", async (req, res) => {
     }
 
     const body = parseJsonBody(req.body, templateInputSchema)
-    const template = store.upsertTemplate(user.id, {
+
+    const nameTaken = (await store.listTemplatesForUser(user.id)).some(
+      (t) => t.id !== id && t.name.toLowerCase().trim() === body.name.toLowerCase().trim()
+    )
+    if (nameTaken) {
+      return jsonError(res, "TEMPLATE_NAME_EXISTS", "A template with this name already exists.", 409)
+    }
+
+    const template = await store.upsertTemplateForUser(user.id, {
       id,
       created_at: existing.created_at,
       ...body,
@@ -83,7 +99,7 @@ router.delete("/:id", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { id } = req.params
-    const existing = store.getTemplate(user.id, id)
+    const existing = await store.getTemplateForUser(user.id, id)
 
     if (!existing) {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)
@@ -93,7 +109,7 @@ router.delete("/:id", async (req, res) => {
       return jsonError(res, "TEMPLATE_LOCKED", "The default template cannot be deleted.", 403)
     }
 
-    const deleted = store.deleteTemplate(user.id, id)
+    const deleted = await store.deleteTemplateForUser(user.id, id)
     return jsonOk(res, { deleted })
   } catch (error) {
     return handleRouteError(res, error)

@@ -16,11 +16,11 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
-import type { ImportJob, Template } from "@/lib/types"
+import type { ImportJob } from "@/lib/types"
 
 type Props = {
   imports: ImportJob[]
-  templates: Template[]
+  templates?: unknown[]
 }
 
 type ChartSeries = {
@@ -32,22 +32,12 @@ function formatDate(iso: string) {
   return iso.slice(0, 10)
 }
 
-function buildSeries(imports: ImportJob[], templates: Template[]): ChartSeries[] {
-  const savedImports = imports.filter((job) => job.status === "saved")
-
-  return [
-    ...new Set(
-      savedImports.map((job) => templates.find((t) => t.id === job.template_id)?.name ?? "Unknown")
-    ),
-  ].map((label, index) => ({
-    key: `template_${index}`,
-    label,
-  }))
+function buildSeries(): ChartSeries[] {
+  return [{ key: "leads", label: "Saved leads" }]
 }
 
-function buildData(imports: ImportJob[], templates: Template[], series: ChartSeries[]) {
+function buildData(imports: ImportJob[]) {
   const dateMap = new Map<string, Record<string, number>>()
-  const seriesByLabel = new Map(series.map((item) => [item.label, item.key]))
 
   for (const job of imports) {
     if (job.status !== "saved") {
@@ -55,20 +45,16 @@ function buildData(imports: ImportJob[], templates: Template[], series: ChartSer
     }
 
     const date = formatDate(job.created_at)
-    const templateName = templates.find((t) => t.id === job.template_id)?.name ?? "Unknown"
-    const seriesKey = seriesByLabel.get(templateName) ?? "template_0"
     if (!dateMap.has(date)) dateMap.set(date, {})
     const entry = dateMap.get(date)!
-    entry[seriesKey] = (entry[seriesKey] ?? 0) + job.final_saved_count
+    entry.leads = (entry.leads ?? 0) + job.final_saved_count
   }
 
   return Array.from(dateMap.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, counts]) => {
       const row: Record<string, string | number> = { date }
-      for (const item of series) {
-        row[item.key] = counts[item.key] ?? 0
-      }
+      row.leads = counts.leads ?? 0
       return row
     })
 }
@@ -92,13 +78,10 @@ function buildConfig(series: ChartSeries[]): ChartConfig {
   return config
 }
 
-export function ChartLineInteractive({ imports, templates }: Props) {
-  const series = React.useMemo(
-    () => buildSeries(imports, templates),
-    [imports, templates]
-  )
+export function ChartLineInteractive({ imports }: Props) {
+  const series = React.useMemo(() => buildSeries(), [])
 
-  const chartData = React.useMemo(() => buildData(imports, templates, series), [imports, templates, series])
+  const chartData = React.useMemo(() => buildData(imports), [imports])
   const chartConfig = React.useMemo(() => buildConfig(series), [series])
 
   const totals = React.useMemo(() => {
@@ -127,7 +110,7 @@ export function ChartLineInteractive({ imports, templates }: Props) {
   }, [chartData, series])
 
   return (
-    <Card className="py-4 sm:py-0">
+    <Card className="overflow-hidden py-0">
       <CardHeader className="flex flex-col items-stretch border-b p-0! sm:flex-row">
         <div className="flex flex-1 flex-col justify-center gap-1 px-6 py-3">
           <CardTitle>Leads Extracted</CardTitle>
@@ -142,7 +125,7 @@ export function ChartLineInteractive({ imports, templates }: Props) {
           </span>
         </div>
       </CardHeader>
-      <CardContent className="px-2 sm:p-6">
+      <CardContent className="px-2 py-4 sm:p-6">
         {series.length > 1 && (
           <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 px-2 text-xs text-muted-foreground sm:px-0">
             {series.map((item) => (
@@ -157,11 +140,16 @@ export function ChartLineInteractive({ imports, templates }: Props) {
             ))}
           </div>
         )}
+        {chartData.length === 0 ? (
+          <div className="grid h-[250px] place-items-center rounded-md border border-dashed text-sm text-muted-foreground">
+            Save cleaned rows to see lead trends.
+          </div>
+        ) : (
         <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
           <LineChart
             accessibilityLayer
             data={chartData}
-            margin={{ top: 18, left: 12, right: 12, bottom: 4 }}
+            margin={{ top: 16, left: 8, right: 16, bottom: 4 }}
           >
             <CartesianGrid vertical={false} />
             <XAxis
@@ -204,6 +192,8 @@ export function ChartLineInteractive({ imports, templates }: Props) {
                 stroke={`var(--color-${item.key})`}
                 strokeWidth={2.5}
                 dot={false}
+                connectNulls
+                isAnimationActive={false}
                 activeDot={{
                   r: 4,
                   fill: `var(--color-${item.key})`,
@@ -214,6 +204,7 @@ export function ChartLineInteractive({ imports, templates }: Props) {
             ))}
           </LineChart>
         </ChartContainer>
+        )}
       </CardContent>
     </Card>
   )

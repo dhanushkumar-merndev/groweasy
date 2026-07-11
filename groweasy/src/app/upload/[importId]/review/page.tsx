@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import { ImportStepLayout } from "@/components/import-step-layout"
 import { ReviewNav, ReviewWorkspace } from "@/components/review-workspace"
@@ -13,7 +14,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ importI
   )
   const { import: job, template } = importData
 
-  if (!job || !template) return null
+  if (!job || !template) redirect("/upload")
 
   const results = await serverFetch<{ rows: CleanedRow[] }>(`/imports/${importId}/results`)
   const rows = results.rows

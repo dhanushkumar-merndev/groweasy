@@ -4,8 +4,17 @@ import { useEffect, useState } from "react"
 import { KeyRoundIcon, LoaderIcon, SaveIcon, TrashIcon } from "lucide-react"
 import { toast } from "sonner"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -26,6 +35,16 @@ const PROVIDER_MODELS: Record<string, { label: string; models: { value: string; 
       { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant" },
     ],
   },
+}
+
+const DELETE_CONFIRMATION_TEXT = "DELETE MY API"
+
+type ApiKeyResponse = {
+  hasKey?: boolean
+  maskedKey?: string
+  provider?: string
+  model?: string
+  useUserApiKey?: boolean
 }
 
 function normalizeProvider(provider: unknown) {
@@ -49,22 +68,42 @@ export function ApiKeyManager() {
   const [useUserApiKey, setUseUserApiKey] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [removeDialogOpen, setRemoveDialogOpen] = useState(false)
+  const [removeConfirmation, setRemoveConfirmation] = useState("")
+
+  async function loadApiKeySettings() {
+    const data: ApiKeyResponse = await api("/settings/apikey")
+      .then((r) => r.json())
+
+    setUseUserApiKey(Boolean(data.useUserApiKey))
+    if (data.hasKey) {
+      const p = normalizeProvider(data.provider)
+      const m = getSupportedModel(p, data.model)
+      setSavedInfo({ provider: p, model: m })
+      setProvider(p)
+      setModel(m)
+    } else {
+      setSavedInfo(null)
+    }
+  }
 
   useEffect(() => {
-    api("/settings/apikey")
-      .then((r) => r.json())
-      .then((data) => {
-        setUseUserApiKey(Boolean(data.data?.useUserApiKey))
-        if (data.data?.hasKey) {
-          const p = normalizeProvider(data.data.provider)
-          const m = getSupportedModel(p, data.data.model)
-          setSavedInfo({ provider: p, model: m })
-          setProvider(p)
-          setModel(m)
-        }
+    loadApiKeySettings()
+      .catch(() => {
+        toast.error("Unable to load API key settings")
       })
       .finally(() => setLoading(false))
   }, [])
+
+  function refreshSettingsPanels() {
+    window.dispatchEvent(new Event("ai-settings-changed"))
+  }
+
+  async function refreshAfterChange() {
+    await loadApiKeySettings()
+    refreshSettingsPanels()
+  }
 
   const models = PROVIDER_MODELS[provider]?.models ?? []
 
@@ -92,9 +131,8 @@ export function ApiKeyManager() {
     setSaving(false)
     if (res.ok) {
       toast.success("API key saved")
-      setSavedInfo({ provider, model })
       setKey("")
-      window.dispatchEvent(new Event("ai-settings-changed"))
+      await refreshAfterChange()
     } else {
       const err = await res.json().catch(() => ({}))
       toast.error(err?.error ?? "Failed to save API key")
@@ -102,12 +140,17 @@ export function ApiKeyManager() {
   }
 
   async function handleRemove() {
+    if (removeConfirmation !== DELETE_CONFIRMATION_TEXT) return
+
+    setRemoving(true)
     const res = await api("/settings/apikey", { method: "DELETE" })
+    setRemoving(false)
+
     if (res.ok) {
       toast.success("API key removed")
-      setSavedInfo(null)
-      setUseUserApiKey(false)
-      window.dispatchEvent(new Event("ai-settings-changed"))
+      setRemoveDialogOpen(false)
+      setRemoveConfirmation("")
+      await refreshAfterChange()
     } else {
       toast.error("Failed to remove API key")
     }
@@ -123,7 +166,7 @@ export function ApiKeyManager() {
 
     if (res.ok) {
       toast.success(checked ? "Using your API key" : "Using default API keys")
-      window.dispatchEvent(new Event("ai-settings-changed"))
+      await refreshAfterChange()
     } else {
       setUseUserApiKey(!checked)
       toast.error("Failed to update API key mode")
@@ -133,11 +176,20 @@ export function ApiKeyManager() {
   const hasExisting = !!savedInfo
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Your AI provider</CardTitle>
+    <>
+    <Card className="overflow-hidden py-0">
+      <CardHeader className="flex flex-row items-center justify-between gap-3 border-b px-5 py-4">
+        <div>
+          <CardTitle className="text-base">Your AI provider</CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">Controls row processing, analytics, and upload limits.</p>
+        </div>
+        {!loading ? (
+          <Badge variant={useUserApiKey && hasExisting ? "default" : "secondary"}>
+            {useUserApiKey && hasExisting ? "Custom key active" : "Default keys"}
+          </Badge>
+        ) : null}
       </CardHeader>
-      <CardContent className="grid gap-4">
+      <CardContent className="grid gap-4 p-5">
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <LoaderIcon className="size-4 animate-spin" />
@@ -145,17 +197,17 @@ export function ApiKeyManager() {
           </div>
         ) : (
           <div className="grid gap-4">
-            <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 p-4">
+            <div className="flex items-center justify-between gap-4 rounded-md border bg-muted/15 px-4 py-3">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="grid size-9 place-items-center rounded-md bg-primary/10 text-primary">
+                <div className="grid size-8 place-items-center rounded-md bg-primary/10 text-primary">
                   <KeyRoundIcon className="size-4" />
                 </div>
                 <div className="min-w-0">
                   <Label htmlFor="use-user-api-key" className="text-sm font-medium">
                     Use my API key for AI processing and analytics
                   </Label>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Off uses Cloudflare for row processing and Groq for analytics.
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Turn off to disable your saved key without deleting it.
                   </p>
                 </div>
               </div>
@@ -172,63 +224,75 @@ export function ApiKeyManager() {
             </div>
 
             <fieldset disabled={!useUserApiKey} className="grid gap-3 disabled:opacity-45">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[180px_260px_minmax(280px,1fr)]">
-              <div className="grid gap-2">
-                <RequiredLabel>Provider</RequiredLabel>
-                <Select value={provider} onValueChange={handleProviderChange}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(PROVIDER_MODELS).map(([value, p]) => (
-                      <SelectItem key={value} value={value}>{p.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="rounded-md border">
+                <div className="grid border-b md:grid-cols-3">
+                  <SettingSummary label="Status" value={hasExisting ? "Saved" : "No key"} />
+                  <SettingSummary label="Provider" value={PROVIDER_MODELS[provider]?.label ?? provider} />
+                  <SettingSummary label="Model" value={models.find((item) => item.value === model)?.label ?? model} />
+                </div>
+                <div className="grid gap-4 p-4 lg:grid-cols-[160px_minmax(220px,260px)_minmax(260px,1fr)]">
+                  <div className="grid gap-2">
+                    <RequiredLabel>Provider</RequiredLabel>
+                    <Select value={provider} onValueChange={handleProviderChange}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(PROVIDER_MODELS).map(([value, p]) => (
+                          <SelectItem key={value} value={value}>{p.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <RequiredLabel>Model</RequiredLabel>
+                    <Select value={model} onValueChange={(v) => v && setModel(v)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {models.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <RequiredLabel>API key</RequiredLabel>
+                    <Input
+                      type="password"
+                      value={key}
+                      onChange={(e) => setKey(e.target.value)}
+                      placeholder={hasExisting ? "New key (leave blank to keep current)" : provider === "cloudflare" ? "accountId:cloudflare-api-token" : "gsk_..."}
+                      required={useUserApiKey && !hasExisting}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {provider === "cloudflare"
+                        ? "Use accountId:api-token."
+                        : "Required for your own Groq processing."}
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="grid gap-2">
-                <RequiredLabel>Model</RequiredLabel>
-                <Select value={model} onValueChange={(v) => v && setModel(v)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((m) => (
-                      <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2 md:col-span-2 xl:col-span-1">
-                <RequiredLabel>API key</RequiredLabel>
-                <Input
-                  type="password"
-                  value={key}
-                  onChange={(e) => setKey(e.target.value)}
-                  placeholder={hasExisting ? "New key (leave blank to keep current)" : provider === "cloudflare" ? "accountId:cloudflare-api-token" : "gsk_..."}
-                  required={useUserApiKey && !hasExisting}
-                />
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
-                  {provider === "cloudflare"
-                    ? "Mandatory format: accountId:api-token."
-                    : "Mandatory when using your own Groq key."}
+                  {hasExisting ? "Leave the key field blank to keep the current saved key." : "Save a key before processing larger uploads."}
                 </p>
-              </div>
-              </div>
-              <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                 <Button onClick={handleSave} disabled={saving || (!key.trim() && !hasExisting)}>
                   <SaveIcon />
                   {saving ? "Saving..." : hasExisting ? "Update" : "Save key"}
                 </Button>
                 {hasExisting && (
-                  <Button size="sm" variant="destructive" onClick={handleRemove}>
+                  <Button variant="destructive" onClick={() => setRemoveDialogOpen(true)}>
                     <TrashIcon />
                     Remove
                   </Button>
                 )}
+                </div>
               </div>
             </fieldset>
-            <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-md border bg-muted/15 px-3 py-2 text-sm text-muted-foreground">
               {useUserApiKey
                 ? hasExisting
                   ? "Custom key is active for AI processing and analytics."
@@ -239,6 +303,63 @@ export function ApiKeyManager() {
         )}
       </CardContent>
     </Card>
+    <Dialog
+      open={removeDialogOpen}
+      onOpenChange={(open) => {
+        setRemoveDialogOpen(open)
+        if (!open) setRemoveConfirmation("")
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Remove API key</DialogTitle>
+          <DialogDescription>
+            This removes the saved API key from the database. Use the toggle if you only want to disable it.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          <Label htmlFor="remove-api-key-confirmation" className="select-text">
+            Type <span className="select-text font-semibold text-foreground">{DELETE_CONFIRMATION_TEXT}</span> to confirm.
+          </Label>
+          <Input
+            id="remove-api-key-confirmation"
+            value={removeConfirmation}
+            onChange={(event) => setRemoveConfirmation(event.target.value)}
+            autoComplete="off"
+            placeholder={DELETE_CONFIRMATION_TEXT}
+          />
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setRemoveDialogOpen(false)}
+            disabled={removing}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => void handleRemove()}
+            disabled={removing || removeConfirmation !== DELETE_CONFIRMATION_TEXT}
+          >
+            <TrashIcon />
+            {removing ? "Removing..." : "Remove API key"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
+  )
+}
+
+function SettingSummary({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 px-4 py-3">
+      <div className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate text-sm font-medium">{value}</div>
+    </div>
   )
 }
 
