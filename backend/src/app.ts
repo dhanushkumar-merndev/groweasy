@@ -71,8 +71,9 @@ const authLimiter = rateLimit({
   message: { error: { code: "RATE_LIMITED", message: "Too many auth requests. Try again shortly." } },
 })
 
-app.use("/api/auth", authLimiter, authRoutes)
 app.use(express.json({ limit: "25mb" }))
+
+app.use("/api/auth", authLimiter, authRoutes)
 
 app.use("/api/clean-batch", limiter, cleanBatchRoutes)
 
