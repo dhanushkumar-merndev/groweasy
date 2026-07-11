@@ -19,6 +19,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "GrowEasy AI Excel Cleaner",
   description: "Clean Excel and CSV imports with AI, review, export, and analytics.",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
