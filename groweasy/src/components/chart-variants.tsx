@@ -81,6 +81,12 @@ type SuggestedChart = {
   reason?: string
 }
 
+type ChartVariantsProps = {
+  allRows: SavedRow[]
+  template: Template
+  useAiSuggestions?: boolean
+}
+
 const pieColors = [
   "var(--chart-1)",
   "var(--chart-2)",
@@ -362,13 +368,28 @@ export function ChartVariants({
   allRows,
   template,
   useAiSuggestions = true,
-}: {
-  allRows: SavedRow[]
-  template: Template
-  useAiSuggestions?: boolean
-}) {
+}: ChartVariantsProps) {
+  const datasetKey = `${template.id}:${useAiSuggestions ? "ai" : "default"}:${allRows[0]?.import_id ?? "none"}:${allRows.length}`
+
+  return (
+    <ChartVariantsWorkspace
+      key={datasetKey}
+      allRows={allRows}
+      template={template}
+      useAiSuggestions={useAiSuggestions}
+    />
+  )
+}
+
+function ChartVariantsWorkspace({
+  allRows,
+  template,
+  useAiSuggestions = true,
+}: ChartVariantsProps) {
   const [suggestedSpecs, setSuggestedSpecs] = useState<ChartSpec[] | null>(null)
-  const [aiState, setAiState] = useState<"idle" | "loading" | "ready" | "fallback">(useAiSuggestions ? "loading" : "idle")
+  const [aiState, setAiState] = useState<"idle" | "loading" | "ready" | "fallback">(
+    useAiSuggestions ? (allRows.length > 0 ? "loading" : "fallback") : "idle",
+  )
   const [manualSpecs, setManualSpecs] = useState<ChartSpec[]>([])
   const [editedSpecs, setEditedSpecs] = useState<ChartSpec[] | null>(null)
   const [activeChartId, setActiveChartId] = useState<string | null>(null)
@@ -390,51 +411,6 @@ export function ChartVariants({
     })
   }, [allRows, dateRange, primaryDateColumn])
 
-  // Reset local state when template, AI mode, or data dependencies change (render-time reset to avoid effect lint)
-  const [prevTemplate, setPrevTemplate] = useState(template)
-  const [prevAi, setPrevAi] = useState(useAiSuggestions)
-  const [prevImportId, setPrevImportId] = useState<string | undefined>(filteredRows[0]?.import_id)
-  const [prevLength, setPrevLength] = useState(filteredRows.length)
-  const [prevSuggested, setPrevSuggested] = useState<ChartSpec[] | null>(null)
-
-  const currentImportId = filteredRows[0]?.import_id
-  const currentLength = filteredRows.length
-
-  if (
-    template !== prevTemplate ||
-    useAiSuggestions !== prevAi ||
-    currentImportId !== prevImportId ||
-    currentLength !== prevLength
-  ) {
-    setPrevTemplate(template)
-    setPrevAi(useAiSuggestions)
-    setPrevImportId(currentImportId)
-    setPrevLength(currentLength)
-
-    setSelectedColumn(template.columns_config[0]?.key ?? "")
-    setManualSpecs([])
-    setEditedSpecs(null)
-    setActiveChartId(null)
-
-    if (useAiSuggestions) {
-      if (currentImportId && currentLength > 0) {
-        setAiState("loading")
-      } else {
-        setAiState("fallback")
-      }
-    } else {
-      setAiState("idle")
-    }
-    setSuggestedSpecs(null)
-    setPrevSuggested(null)
-  }
-
-  if (suggestedSpecs !== prevSuggested) {
-    setPrevSuggested(suggestedSpecs)
-    setEditedSpecs(null)
-    setActiveChartId(null)
-  }
-
   const trendData = useMemo(() => buildTrendData(filteredRows, primaryDateColumn), [filteredRows, primaryDateColumn])
   const fallbackSpecs = useMemo(() => buildDynamicSpecs(filteredRows, template, primaryDateColumn), [filteredRows, template, primaryDateColumn])
   const waitingForAi = useAiSuggestions && aiState === "loading" && suggestedSpecs === null
@@ -443,7 +419,7 @@ export function ChartVariants({
       ? suggestedSpecs
       : waitingForAi
         ? []
-        : fallbackSpecs
+      : fallbackSpecs
     : fallbackSpecs
   const chartSpecs = editedSpecs ?? [...baseSpecs, ...manualSpecs]
   const activeChart = chartSpecs.find((s) => s.id === activeChartId) ?? chartSpecs[0] ?? null

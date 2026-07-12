@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { EyeIcon, GaugeIcon, LoaderIcon, SaveIcon } from "lucide-react"
+import { EyeIcon, GaugeIcon, SaveIcon } from "lucide-react"
 import { toast } from "sonner"
 
+import { SettingsPanelSkeleton } from "@/components/skeletons/page-skeletons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -55,36 +56,63 @@ export function AiBatchSettings() {
   const [activeProfile, setActiveProfile] = useState<ActiveProfile | null>(null)
   const [recommendation, setRecommendation] = useState<BatchRecommendation | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [savingReviewMode, setSavingReviewMode] = useState(false)
 
   useEffect(() => {
-    function loadSettings() {
+    let active = true
+
+    async function loadSettings() {
       setLoading(true)
-      api("/settings/ai")
-        .then((r) => r.json())
-        .then((payload: SettingsResponse) => {
-          if (payload.settings) {
-            setSettings(payload.settings)
-            setSavedSettings(payload.settings)
-          }
-          if (payload.limits) {
-            setLimits(payload.limits)
-          }
-          if (payload.activeProfile) {
-            setActiveProfile(payload.activeProfile)
-          }
-          if (payload.recommendation) {
-            setRecommendation(payload.recommendation)
-          }
-        })
-        .finally(() => setLoading(false))
+      setLoadError(null)
+
+      try {
+        const response = await api("/settings/ai")
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}))
+          throw new Error(error?.error ?? "Unable to load AI settings")
+        }
+
+        const payload: SettingsResponse = await response.json()
+        if (!active) return
+
+        if (payload.settings) {
+          setSettings(payload.settings)
+          setSavedSettings(payload.settings)
+        }
+        if (payload.limits) {
+          setLimits(payload.limits)
+        }
+        if (payload.activeProfile) {
+          setActiveProfile(payload.activeProfile)
+        }
+        if (payload.recommendation) {
+          setRecommendation(payload.recommendation)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to load AI settings"
+        if (!active) return
+        setLoadError(message)
+        toast.error(message)
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
     }
 
-    loadSettings()
-    window.addEventListener("ai-settings-changed", loadSettings)
+    function handleSettingsChanged() {
+      void loadSettings()
+    }
 
-    return () => window.removeEventListener("ai-settings-changed", loadSettings)
+    void loadSettings()
+    window.addEventListener("ai-settings-changed", handleSettingsChanged)
+
+    return () => {
+      active = false
+      window.removeEventListener("ai-settings-changed", handleSettingsChanged)
+    }
   }, [])
 
   const effectiveLimits = limits ?? {
@@ -97,6 +125,7 @@ export function AiBatchSettings() {
 
   function updateSetting(key: BatchNumberSetting, value: number) {
     setSettings((current) => {
+      // Clamp once at the boundary so the slider and number input stay aligned.
       const next = {
         ...current,
         [key]: clamp(value, effectiveLimits[key].min, effectiveLimits[key].max),
@@ -120,7 +149,7 @@ export function AiBatchSettings() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        batchSize: settings.requestBatchSize,
+        batchSize: settings.batchSize,
         requestBatchSize: settings.requestBatchSize,
       }),
     })
@@ -174,7 +203,7 @@ export function AiBatchSettings() {
 
     setSettings((current) => ({
       ...current,
-      batchSize: clamp(recommendation.requestBatchSize, effectiveLimits.batchSize.min, effectiveLimits.batchSize.max),
+      batchSize: clamp(recommendation.batchSize, effectiveLimits.batchSize.min, effectiveLimits.batchSize.max),
       requestBatchSize: clamp(
         recommendation.requestBatchSize,
         effectiveLimits.requestBatchSize.min,
@@ -184,34 +213,34 @@ export function AiBatchSettings() {
   }
 
   return (
+    loading ? <SettingsPanelSkeleton rows={4} /> : (
     <Card className="overflow-hidden py-0">
-      <CardHeader className="flex flex-row items-start justify-between gap-3 border-b px-5 py-4">
+      <CardHeader className="flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <CardTitle className="flex items-center gap-2 text-base">
             <GaugeIcon className="size-4" />
             AI batch tuning
           </CardTitle>
-          <CardDescription className="mt-1 truncate text-xs">
+          <CardDescription className="mt-1 text-xs" title={activeProfile ? `${activeProfile.source === "user" ? "User" : "Default"} model: ${activeProfile.model}` : undefined}>
             {activeProfile
               ? `${activeProfile.source === "user" ? "User" : "Default"} model: ${activeProfile.model}`
               : "Tune rows per request for the active AI model."}
           </CardDescription>
         </div>
         {!loading ? (
-          <Badge variant={settings.detailedReviewEnabled ? "secondary" : "default"}>
+          <Badge className="shrink-0" variant={settings.detailedReviewEnabled ? "secondary" : "default"}>
             {settings.detailedReviewEnabled ? "Detailed" : "Compact"}
           </Badge>
         ) : null}
       </CardHeader>
       <CardContent className="grid gap-4 p-5">
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <LoaderIcon className="size-4 animate-spin" />
-            Loading...
+        {loadError ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            {loadError}
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between gap-4 rounded-md border bg-muted/15 px-4 py-3">
+            <div className="flex flex-col gap-4 rounded-md border bg-muted/15 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid size-8 place-items-center rounded-md bg-primary/10 text-primary">
                   <EyeIcon className="size-4" />
@@ -253,7 +282,7 @@ export function AiBatchSettings() {
             {recommendation ? (
               <div className="rounded-md border bg-muted/15 px-4 py-3">
                 <div className="min-w-0">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm font-medium">{recommendation.label}</div>
                     <Button type="button" size="sm" variant="outline" onClick={applyRecommendation}>
                       Apply
@@ -295,6 +324,7 @@ export function AiBatchSettings() {
         )}
       </CardContent>
     </Card>
+    )
   )
 }
 
@@ -315,7 +345,7 @@ function BatchControl({
 }) {
   return (
     <div className="grid gap-2">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Label>{label}</Label>
         <Input
           className="w-20 text-right"
@@ -334,8 +364,8 @@ function BatchControl({
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{hint}</span>
+      <div className="flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <span className="min-w-0">{hint}</span>
         <span>{min}-{max}</span>
       </div>
     </div>

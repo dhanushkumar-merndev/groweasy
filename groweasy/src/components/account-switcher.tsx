@@ -148,7 +148,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
   const showSkeleton = loading && sessions.length === 0
 
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen && !user.isDemo) {
+    if (nextOpen) {
       setLoading(true)
     }
 
@@ -160,7 +160,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
   }
 
   React.useEffect(() => {
-    if (!open || user.isDemo) return
+    if (!open) return
 
     let cancelled = false
 
@@ -187,7 +187,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
     return () => {
       cancelled = true
     }
-  }, [open, user.isDemo])
+  }, [open])
 
   async function switchSession(row: SessionRow) {
     if (row.active || !row.token) return
@@ -248,7 +248,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
 
   async function logout() {
     try {
-      const deviceSessions = user.isDemo ? [] : await fetchDeviceSessions().catch(() => [])
+      const deviceSessions = await fetchDeviceSessions().catch(() => [])
       const currentSession = deviceSessions.find((item) => item.user.id === user.id)
       const hasNextSession = deviceSessions.some((item) => item.user.id !== user.id)
 
@@ -482,7 +482,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
               type="button"
               variant="destructive"
               className="justify-center"
-              disabled={user.isDemo || rows.length <= 1 || loggingOutAll}
+              disabled={rows.length <= 1 || loggingOutAll}
               onClick={() => setConfirmLogoutAll(true)}
             >
               <LogOutIcon className="size-4" />
@@ -492,7 +492,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
               type="button"
               variant="outline"
               className="justify-center"
-              disabled={user.isDemo || adding || sessionLimitReached || loggingOutAll}
+              disabled={adding || sessionLimitReached || loggingOutAll}
               onClick={() => void addAccount()}
             >
               {adding ? <Loader2Icon className="size-4 animate-spin" /> : <PlusIcon className="size-4" />}

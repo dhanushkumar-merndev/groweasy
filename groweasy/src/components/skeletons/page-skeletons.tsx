@@ -69,6 +69,47 @@ export function TemplateCardsSkeleton({ includeCreate = false }: { includeCreate
   )
 }
 
+export function SettingsPanelSkeleton({ rows = 4 }: { rows?: number }) {
+  return (
+    <Card className="overflow-hidden py-0">
+      <CardHeader className="border-b">
+        <div className="flex items-start justify-between gap-3">
+          <div className="grid gap-2">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-3 w-64 max-w-full" />
+          </div>
+          <Skeleton className="h-5 w-24 rounded-full" />
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4 p-5">
+        <div className="rounded-md border p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <Skeleton className="size-8 rounded-md" />
+              <div className="grid gap-2">
+                <Skeleton className="h-4 w-44" />
+                <Skeleton className="h-3 w-52 max-w-full" />
+              </div>
+            </div>
+            <Skeleton className="h-7 w-12 rounded-full" />
+          </div>
+        </div>
+        <div className="rounded-md border p-4">
+          <div className="grid gap-3">
+            {Array.from({ length: rows }).map((_, index) => (
+              <Skeleton key={index} className="h-10 w-full" />
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-4 w-52 max-w-full" />
+          <Skeleton className="h-9 w-28" />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function AnalyticsDetailSkeleton() {
   return (
     <div className="grid gap-4">

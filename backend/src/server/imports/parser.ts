@@ -4,6 +4,13 @@ import { sanitizeCellValue } from "../../lib/formatting.js"
 import type { ImportSheet, RawImportRow, RowData, ValidationResult, ValidationWarning } from "../../lib/types.js"
 import { logger } from "../../lib/logger.js"
 
+/**
+ * Spreadsheet parser — reads .xlsx (ExcelJS), .csv, and .tsv files into
+ * RawImportRow arrays. Sanitizes formula-like cells, strips empty rows,
+ * and produces ValidationResult with warnings for hidden sheets, blank
+ * sheets, and oversized files. Stateless per-upload — no shared buffer.
+ */
+
 type ParseOptions = {
   importId: string
   fileName: string

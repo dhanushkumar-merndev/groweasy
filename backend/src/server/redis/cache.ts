@@ -3,6 +3,14 @@ import { Redis } from "@upstash/redis"
 import type { CacheEnvelope } from "../../lib/types.js"
 import { logger } from "../../lib/logger.js"
 
+/**
+ * Redis-backed cache with in-memory fallback.
+ *
+ * Keys are scoped by importId and session hash — no user data is shared
+ * across requests. In-memory Map is process-local (single instance).
+ * If Redis is not configured, falls back to the in-memory cache silently.
+ */
+
 const TTL_SECONDS = 86_400
 const VERSION = "v1"
 export const AUTH_USER_CACHE_TTL_SECONDS = 1_800

@@ -7,6 +7,14 @@ import { requireCurrentUser } from "../middleware/auth.js"
 import { logger } from "../lib/logger.js"
 import { getUserDecryptedKey, shouldUseUserApiKey } from "./settings.js"
 
+/**
+ * Analytics route — AI-powered chart suggestions for saved CRM data.
+ *
+ * POST /suggest-chart: Returns a deterministic fallback chart suggestion
+ * plus 4–8 AI-generated chart blocks. If the AI call fails, falls back to
+ * the deterministic layout with source: "default".
+ */
+
 const router = Router()
 const chartSuggestionTimeoutMs = Number(process.env.ANALYTICS_AI_TIMEOUT_MS ?? 15000)
 const chartSuggestionMaxTokens = Number(process.env.ANALYTICS_AI_MAX_TOKENS ?? 1200)
@@ -132,10 +140,17 @@ async function suggestChartLayoutWithAi(
     .slice(0, 8))
 }
 
+/**
+ * Builds the AI request payload from the user's auth context.
+ * Returns null if no AI provider is configured or the user has no API key.
+ */
 async function buildAiRequest(userId: string) {
   const userKey = await shouldUseUserApiKey(userId) ? await getUserDecryptedKey(userId) : null
   const provider = normalizeProvider(userKey?.provider ?? process.env.ANALYTICS_AI_PROVIDER ?? process.env.PRIMARY_AI_PROVIDER ?? "groq")
-  const model = userKey?.model?.trim() || process.env.ANALYTICS_AI_MODEL?.trim() || process.env.PRIMARY_AI_MODEL?.trim() || (provider === "cloudflare" ? "@cf/google/gemma-4-26b-a4b-it" : provider === "commandcode" ? "deepseek/deepseek-v4-pro" : "qwen/qwen3.6-27b")
+  const model = userKey?.model?.trim()
+    || process.env.ANALYTICS_AI_MODEL?.trim()
+    || process.env.PRIMARY_AI_MODEL?.trim()
+    || defaultModelForProvider(provider)
   const apiKey = userKey?.key || firstEnvKey(
     provider === "cloudflare"
       ? ["CLOUDFLARE_API", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY"]
@@ -150,6 +165,15 @@ async function buildAiRequest(userId: string) {
   return { provider, model, apiKey, baseUrl }
 }
 
+function defaultModelForProvider(provider: string) {
+  const models: Record<string, string> = {
+    cloudflare: "@cf/google/gemma-4-26b-a4b-it",
+    commandcode: "deepseek/deepseek-v4-pro",
+    groq: "qwen/qwen3.6-27b",
+  }
+  return models[normalizeProvider(provider)] ?? models.groq
+}
+
 class AiRequestError extends Error {
   status?: number
 
@@ -160,6 +184,10 @@ class AiRequestError extends Error {
   }
 }
 
+/**
+ * AI chart suggestion request with retry logic.
+ * Returns parsed chart content from the AI provider, throws on exhaustion.
+ */
 async function requestAiJsonWithRetry(input: { provider: string; model: string; apiKey: string; baseUrl: string; system: string; user: string }) {
   let lastError: unknown = null
   const maxAttempts = Math.max(1, chartSuggestionMaxAttempts)
@@ -187,6 +215,10 @@ async function requestAiJsonWithRetry(input: { provider: string; model: string; 
   throw lastError
 }
 
+/**
+ * Sends a chat completion request to Groq/CommandCode with JSON mode.
+ * Falls back to non-JSON mode if the model doesn't support response_format.
+ */
 async function requestAiJson(input: { provider: string; model: string; apiKey: string; baseUrl: string; system: string; user: string }) {
   if (input.provider === "cloudflare") {
     return requestCloudflareAnalyticsJson(input)
@@ -291,6 +323,7 @@ async function requestCloudflareAnalyticsJson(input: { model: string; apiKey: st
   }
 }
 
+/** Retry on timeout, conflict, too-early, rate-limit, and server errors. */
 function shouldRetryAiRequest(error: unknown) {
   const status = typeof error === "object" && error !== null && "status" in error
     ? Number((error as { status?: unknown }).status)
@@ -316,6 +349,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** Attempts to parse AI content as JSON, falling back to regex extraction. */
 function parseAiChartResponse(content: string): { charts?: unknown[] } | null {
   try {
     return JSON.parse(content) as { charts?: unknown[] }
@@ -330,6 +364,10 @@ function parseAiChartResponse(content: string): { charts?: unknown[] } | null {
   }
 }
 
+/**
+ * Validates and normalizes a raw AI chart object into a typed ChartSuggestion.
+ * Rejects charts with x_axis columns not present in the dataset.
+ */
 function normalizeAiChart(chart: unknown, index: number, allowedColumns: Set<string>): ChartSuggestion | null {
   if (!chart || typeof chart !== "object") return null
   const source = chart as Record<string, unknown>
@@ -356,6 +394,7 @@ function normalizeChartType(value: string): ChartType | null {
   return null
 }
 
+/** Ensures chart types are diverse — each type used at most once, capped at 8. */
 function diversifyChartTypes(charts: ChartSuggestion[]) {
   const byAxis = new Set<string>()
   const deduped = charts.filter((chart) => {
@@ -448,6 +487,10 @@ function supportsReasoningOptions(model: string) {
   )
 }
 
+/**
+ * Deterministic multi-chart layout — generates 4–6 chart blocks from column
+ * profiles without any AI call. Used as AI fallback.
+ */
 function suggestChartLayout(
   columns: string[],
   sampleRows: Array<Record<string, unknown>>,
@@ -524,6 +567,11 @@ function chartRank(kind: string) {
 
 export default router
 
+/**
+ * Deterministic single-chart suggestion — picks the best chart type based on
+ * column profiles (date → line/area, status → pie, location → horizontal_bar).
+ * Used as the primary suggestion and as fallback when AI is unavailable.
+ */
 function suggestChart(columns: string[], sampleRows: Array<Record<string, unknown>>) {
   const fallbackColumn = columns[0] ?? "source"
   const profiles = columns.map((column) => profileColumn(column, sampleRows))

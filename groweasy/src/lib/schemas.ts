@@ -1,5 +1,14 @@
-import { z } from "zod"
+/**
+ * Zod validation schemas for all API request/response shapes.
+ *
+ * Every schema here is used by parseJsonBody() in server/api.ts to validate
+ * incoming payloads before they reach route handlers. Schemas ending in
+ * "Schema" are full validation schemas; those ending in "InputSchema" are
+ * used for POST/PATCH bodies; those without a suffix are leaf types composed
+ * by larger schemas.
+ */
 
+import { z } from "zod"
 import type { ChartType, FormattingRule, RowData, RowStatus } from "@/lib/types"
 
 export const formattingRuleSchema = z.enum([
@@ -30,6 +39,7 @@ export const rowStatusSchema = z.enum(["good", "missing", "skipped"]) satisfies 
 
 const cellValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()])
 
+/** Free-form key-value row data — values can be string, number, boolean, or null. */
 export const rowDataSchema = z.record(z.string(), cellValueSchema) satisfies z.ZodType<RowData>
 
 export const aiCellChangeSchema = z.object({
@@ -37,6 +47,40 @@ export const aiCellChangeSchema = z.object({
   before: z.string().nullable(),
   after: z.string().nullable(),
   reason: z.string(),
+})
+
+/**
+ * Raw import row with all optional fields — supports both raw_data and
+ * legacy data keys. The transform normalizes the 4 possible ID/sheet/index
+ * sources into a consistent shape.
+ */
+export const rawImportRowSchema = z.object({
+  id: z.string().optional(),
+  import_id: z.string().optional(),
+  sheet_id: z.string().optional(),
+  sheet_name: z.string().optional(),
+  sheet_index: z.number().int().min(0).optional(),
+  row_index: z.number().int().min(0).optional(),
+  source_sheet: z.string().optional(),
+  source_sheet_index: z.number().int().min(0).optional(),
+  source_row_index: z.number().int().min(0).optional(),
+  raw_data: rowDataSchema.optional(),
+  data: rowDataSchema.optional(),
+}).transform((row) => {
+  const importId = row.import_id ?? ""
+  const sheetIndex = row.sheet_index ?? row.source_sheet_index ?? 0
+  const rowIndex = row.row_index ?? row.source_row_index ?? 0
+  const sheetName = row.sheet_name ?? row.source_sheet ?? "Upload"
+
+  return {
+    id: row.id ?? `${importId}_${sheetIndex}_${rowIndex}`,
+    import_id: importId,
+    sheet_id: row.sheet_id ?? `${importId}_sheet_${sheetIndex + 1}`,
+    sheet_name: sheetName,
+    sheet_index: sheetIndex,
+    row_index: rowIndex,
+    raw_data: row.raw_data ?? row.data ?? {},
+  }
 })
 
 export const cleanedRowSchema = z.object({
@@ -54,6 +98,7 @@ export const cleanedRowSchema = z.object({
   ai_changes: z.array(aiCellChangeSchema).default([]),
 })
 
+/** Template column config — validated on template create/update. */
 export const templateColumnSchema = z.object({
   key: z.string().min(1).regex(/^[a-z0-9_]+$/),
   label: z.string().min(1),
@@ -79,6 +124,16 @@ export const processImportSchema = z.object({
   force: z.boolean().default(false),
 })
 
+export const validateImportSchema = z.object({
+  rows: z.array(rawImportRowSchema).optional(),
+  blank_rows_removed: z.number().int().min(0).default(0),
+  remove_blank_rows: z.boolean().default(true),
+  dash_values_blank: z.boolean().default(true),
+  require_both_email_phone: z.boolean().default(false),
+  generate_description: z.boolean().default(false),
+  correct_spelling: z.boolean().default(false),
+})
+
 export const saveImportSchema = z.object({
   row_ids: z.array(z.string()).optional(),
   rows: z.array(cleanedRowSchema).optional(),
@@ -88,7 +143,7 @@ export const tableRowsQuerySchema = z.object({
   sheet: z.string().optional(),
   status: rowStatusSchema.optional(),
   search: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(500).default(100),
+  limit: z.coerce.number().int().min(1).max(10000).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 })
 
@@ -110,12 +165,26 @@ export const chartTypeSchema = z.enum([
   "horizontal_bar",
   "vertical_bar",
   "area",
+  "radar",
+  "radial_bar",
 ]) satisfies z.ZodType<ChartType>
 
 export const analyticsSuggestSchema = z.object({
   import_id: z.string().min(1),
   sheet: z.string().optional(),
   columns: z.array(z.string()).default([]),
+  template_columns: z.array(templateColumnSchema).default([]),
+  column_profiles: z.array(z.object({
+    key: z.string(),
+    label: z.string(),
+    kind: z.string(),
+    unique_count: z.number().int().min(0),
+    filled_count: z.number().int().min(0),
+    top_values: z.array(z.object({
+      name: z.string(),
+      value: z.number().int().min(0),
+    })).default([]),
+  })).default([]),
   sample_rows: z.array(rowDataSchema).default([]),
   filters: z.record(z.string(), z.string()).default({}),
 })
@@ -136,4 +205,63 @@ export const exportExcelSchema = z.object({
   mode: z.enum(["all_good", "same_tabs", "selected_sheet", "filtered", "missing_summary"]).default("all_good"),
   sheet_name: z.string().optional(),
   search: z.string().optional(),
+})
+
+/** Template column definition for the Clean Batch external API. */
+export const cleanBatchTemplateColumnSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  type: z.string().min(1).default("text"),
+  required: z.boolean().default(false),
+})
+
+/**
+ * Inbound Clean Batch request — external API contract used by Groweasy
+ * integrations. Rows are provided as {source_sheet, source_sheet_index,
+ * source_row_index, data}.
+ */
+export const cleanBatchRequestSchema = z.object({
+  batch_id: z.string().min(1),
+  selected_template: z.object({
+    name: z.string().min(1),
+    columns: z.array(cleanBatchTemplateColumnSchema).min(1),
+  }),
+  rows: z.array(
+    z.object({
+      source_sheet: z.string().min(1),
+      source_sheet_index: z.number().int().min(0),
+      source_row_index: z.number().int().min(1),
+      data: z.record(z.string(), z.string()),
+    })
+  ),
+})
+
+/** Single row output from the Clean Batch API. */
+export const cleanBatchOutputRowSchema = z.object({
+  source_sheet: z.string(),
+  source_sheet_index: z.number().int().min(0),
+  source_row_index: z.number().int().min(1),
+  status: z.enum(["good", "missing", "skipped"]),
+  missing_fields: z.array(z.string()).default([]),
+  skip_reason: z.string().default(""),
+  cleaned_data: rowDataSchema,
+  ai_changes: z.array(aiCellChangeSchema).default([]),
+})
+
+/** Full Clean Batch API response envelope. */
+export const cleanBatchResultSchema = z.object({
+  batch_id: z.string(),
+  good_rows: z.array(cleanBatchOutputRowSchema),
+  missing_rows: z.array(cleanBatchOutputRowSchema),
+  skipped_rows: z.array(cleanBatchOutputRowSchema),
+  summary: z.object({
+    total_input_rows: z.number().int().min(0),
+    good_count: z.number().int().min(0),
+    missing_count: z.number().int().min(0),
+    skipped_count: z.number().int().min(0),
+    ai_changed_row_count: z.number().int().min(0),
+    ai_changed_cell_count: z.number().int().min(0),
+    missing_by_field: z.record(z.string(), z.number().int().min(0)),
+    skipped_by_reason: z.record(z.string(), z.number().int().min(0)),
+  }),
 })

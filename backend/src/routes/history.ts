@@ -5,6 +5,11 @@ import { requireCurrentUser } from "../middleware/auth.js"
 import { store } from "../server/repositories/store.js"
 import { logger } from "../lib/logger.js"
 
+/**
+ * History route — audit log of import lifecycle events.
+ * GET / — list history entries for the current user. Optional ?type=export filter.
+ */
+
 const router = Router()
 
 const EXPORT_ACTIONS = new Set(["rows_saved", "export_done", "google_sheet_export_done"])

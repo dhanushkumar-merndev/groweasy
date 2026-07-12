@@ -46,7 +46,7 @@ export function AppSidebar({
   user,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
-  user?: CurrentUser
+  user: CurrentUser
 }) {
   const pathname = usePathname()
 
@@ -112,17 +112,7 @@ export function AppSidebar({
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        <AccountSwitcher
-          user={
-            user ?? {
-              id: "demo",
-              name: "Excel Cleaner",
-              email: "Google login ready",
-              image: null,
-              isDemo: true,
-            }
-          }
-        />
+        <AccountSwitcher user={user} />
       </SidebarFooter>
     </Sidebar>
   )

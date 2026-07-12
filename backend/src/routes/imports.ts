@@ -15,6 +15,21 @@ import { exportRowsToGoogleSheet } from "../server/google/sheets.js"
 import { getUserAiSettings, hasActiveUserApiKey } from "./settings.js"
 import { logger } from "../lib/logger.js"
 
+/**
+ * Imports route — full file upload → validation → AI processing → save → export pipeline.
+ *
+ * POST   /                         — Upload XLSX/CSV/TSV file
+ * POST   /batch                    — Programmatic batch import
+ * GET    /:id                      — Get import details with validation + rows
+ * POST   /:id/validate             — Validate uploaded rows against template
+ * POST   /:id/process              — Start AI processing (async)
+ * GET    /:id/stream               — SSE stream for real-time processing progress
+ * GET    /:id/results              — Get processed cleaning results
+ * POST   /:id/save                 — Persist good rows to saved_rows
+ * POST   /:id/export/excel         — Download cleaned rows as Excel
+ * POST   /:id/export/google-sheet  — Push cleaned rows to Google Sheets
+ */
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
 const router = Router()
 

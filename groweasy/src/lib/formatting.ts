@@ -9,6 +9,26 @@ import type {
   TemplateColumn,
 } from "@/lib/types"
 
+/**
+ * Deterministic row cleaning pipeline — runs before AI processing.
+ *
+ * Pipeline order:
+ * 1. Source mapping — fuzzy-match raw CSV headers to template columns
+ * 2. Value extraction — pull email/phone/city/state/country from compound cells
+ * 3. Sanitization — blank out NA, nulls, formulas, garbage
+ * 4. Formatting rules — apply per-column rules (title_case, digits_only, etc.)
+ * 5. Spelling normalization — fix common CSV typos (Banglore → Bangalore)
+ * 6. Missing field detection — flag required columns that are still empty
+ *
+ * Row status outcomes:
+ * - "good"    → fully mapped, no missing required fields
+ * - "missing" → some required fields empty, eligible for AI fill
+ * - "skipped"  → no useful data at all, excluded from AI
+ *
+ * This module is intentionally zero-logging — it is a pure deterministic
+ * transform. Callers (imports.ts, clean-batch.ts) handle observability.
+ */
+
 export const DASH_ONLY_RE = /^[-_\s]+$/
 export const GARBAGE_ONLY_RE = /^[#*]+$/
 export const NULLISH_RE = /^(na|n\/a|null|undefined|none|not\s*useful|test|sample|abc123|garbage)$/i
@@ -18,10 +38,10 @@ const SAFE_PLUS_NUMBER_RE = /^\+\d[\d\s().-]*$/
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
 const INTERNATIONAL_PHONE_RE = /(?:\+|00)\s*(\d{1,3})[\s().-]*\d/
 
-export type ContactRequirementOptions = {
-  requireBothEmailPhone?: boolean
-}
-
+/**
+ * Normalizes a string key for comparison — lowercase, replace non-alphanumeric
+ * runs with underscores, strip leading/trailing underscores.
+ */
 export function normalizeKey(value: string) {
   return value
     .trim()
@@ -30,6 +50,18 @@ export function normalizeKey(value: string) {
     .replace(/^_+|_+$/g, "")
 }
 
+function normalizeMeaningKey(value: string) {
+  return normalizeKey(value)
+    .split("_")
+    .map((part) => HEADER_SYNONYMS[part] ?? part)
+    .join("_")
+}
+
+/**
+ * Sanitizes a raw cell value for cleaning. Blanks out NA, null-like strings,
+ * dash-only cells, and formula-like values. Numbers and booleans pass through.
+ * Formula-like values that aren't safe phone numbers get a ' prefix.
+ */
 export function sanitizeCellValue(value: unknown, dashValuesBlank = true): CellValue {
   if (value === null || value === undefined) {
     return ""
@@ -56,6 +88,9 @@ export function sanitizeCellValue(value: unknown, dashValuesBlank = true): CellV
   return compact
 }
 
+/**
+ * Returns true if any key in the row has a non-empty value after trimming.
+ */
 export function hasUsefulData(row: RowData) {
   return Object.values(row).some((value) => {
     if (value === null || value === undefined) {
@@ -66,6 +101,10 @@ export function hasUsefulData(row: RowData) {
   })
 }
 
+/**
+ * Applies an ordered list of formatting rules to a cell value.
+ * Rules like dict_lookup and alignment are no-ops here — handled downstream.
+ */
 export function applyFormattingRules(value: CellValue, rules: FormattingRule[]) {
   let formatted = value === null || value === undefined ? "" : String(value)
 
@@ -144,6 +183,14 @@ export function applyFormattingRules(value: CellValue, rules: FormattingRule[]) 
   return formatted.trim()
 }
 
+export type ContactRequirementOptions = {
+  requireBothEmailPhone?: boolean
+  correctSpelling?: boolean
+}
+
+/**
+ * Runs the full deterministic cleaning pipeline on an array of raw rows.
+ */
 export function cleanRowsWithTemplate(
   rows: RawImportRow[],
   template: Template,
@@ -152,6 +199,10 @@ export function cleanRowsWithTemplate(
   return rows.map((row) => cleanRowWithTemplate(row, template, options))
 }
 
+/**
+ * Runs the full deterministic cleaning pipeline on a single raw row.
+ * Returns status "good", "missing", or "skipped".
+ */
 export function cleanRowWithTemplate(
   row: RawImportRow,
   template: Template,
@@ -176,7 +227,7 @@ export function cleanRowWithTemplate(
     const extractedValue = extractTargetValue(rawValue, column)
     const sanitized = sanitizeCellValue(extractedValue)
     const formatted = applyFormattingRules(sanitized, column.format_rules)
-    const normalized = normalizeTextSpelling(formatted, column)
+    const normalized = options.correctSpelling ? normalizeTextSpelling(formatted, column) : formatted
 
     cleaned_data[column.key] = normalized
   }
@@ -205,6 +256,11 @@ export function cleanRowWithTemplate(
   }
 }
 
+/**
+ * Returns the list of template column keys that are required or essential but
+ * have no value in the cleaned data. Contact fields have relaxed rules — if at
+ * least one of email or phone is present, neither is flagged as missing.
+ */
 export function getMissingFieldsForTemplate(
   template: Template,
   cleanedData: RowData,
@@ -227,7 +283,7 @@ export function getMissingFieldsForTemplate(
       continue
     }
 
-    if (column.required && !hasValue(cleanedData[column.key])) {
+    if ((column.required || isEssentialField(column)) && !hasValue(cleanedData[column.key])) {
       missing.add(column.key)
     }
   }
@@ -247,7 +303,7 @@ export function getMissingFieldsForTemplate(
     }
   } else {
     for (const column of [...emailColumns, ...phoneColumns]) {
-      if (column.required && !hasValue(cleanedData[column.key])) {
+      if ((column.required || isEssentialField(column)) && !hasValue(cleanedData[column.key])) {
         missing.add(column.key)
       }
     }
@@ -282,8 +338,7 @@ function hasValidEmailValue(value: unknown) {
 
 function hasValidPhoneValue(value: unknown) {
   const digits = String(value ?? "").replace(/\D/g, "")
-  const last10 = digits.slice(-10)
-  return last10.length === 10 && /^[6-9]/.test(last10)
+  return digits.length >= 7 && digits.length <= 15
 }
 
 function findSourceValue(row: RowData, column: TemplateColumn) {
@@ -321,13 +376,6 @@ function findSourceValue(row: RowData, column: TemplateColumn) {
   return ""
 }
 
-function normalizeMeaningKey(value: string) {
-  return normalizeKey(value)
-    .split("_")
-    .map((part) => HEADER_SYNONYMS[part] ?? part)
-    .join("_")
-}
-
 function extractTargetValue(value: unknown, column: TemplateColumn) {
   const target = normalizeKey(`${column.key} ${column.label}`)
   const text = value === null || value === undefined ? "" : String(value)
@@ -336,12 +384,17 @@ function extractTargetValue(value: unknown, column: TemplateColumn) {
     return text.match(EMAIL_RE)?.[0] ?? ""
   }
 
+  if (target.includes("mobile") || target.includes("phone") || target.includes("whatsapp")) {
+    return extractMobileNumber(text)
+  }
+
   if (target.includes("country_code") || target.includes("country code") || target.includes("dial_code")) {
     return extractCountryCode(text)
   }
 
-  if (target.includes("mobile") || target.includes("phone") || target.includes("whatsapp")) {
-    return extractMobileNumber(text)
+  if (target.includes("name")) {
+    const parts = text.split("|").map((p) => p.trim()).filter(Boolean)
+    return parts[0] ?? text
   }
 
   if (target === "city_city" || target.endsWith("_city") || target.startsWith("city_")) {
@@ -434,7 +487,11 @@ function normalizeComparableLocation(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
 }
 
-function normalizeTextSpelling(value: string, column: TemplateColumn) {
+/**
+ * Normalizes common spelling mistakes in CSV data using VALUE_SPELLING_FIXES.
+ * Skipped for email, phone, country_code, and uppercase-formatted columns.
+ */
+export function normalizeTextSpelling(value: string, column: TemplateColumn) {
   if (!value || !shouldNormalizeSpelling(column)) {
     return value
   }
@@ -466,6 +523,16 @@ function shouldNormalizeSpelling(column: TemplateColumn) {
   return !column.format_rules.includes("uppercase")
 }
 
+/**
+ * Extracts the international dialing code from a cell value.
+ *
+ * Two-pass approach:
+ * 1. +XX or 00XX prefix → exact match via INTERNATIONAL_PHONE_RE
+ * 2. Raw digits → heuristic detection of common country codes
+ *
+ * TODO: Raw-digit detection is limited to IN (+91) and US (+1).
+ * Adding more countries requires a prefix-length lookup table.
+ */
 function extractCountryCode(value: string) {
   const plainCode = value.trim().match(/^\+?(\d{1,3})$/)
 
@@ -480,34 +547,97 @@ function extractCountryCode(value: string) {
   }
 
   const digits = value.replace(/\D/g, "")
-
-  if (digits.length === 12 && digits.startsWith("91")) {
-    return "+91"
-  }
+  if (digits.length === 12 && digits.startsWith("91")) return "+91"
+  if (digits.length === 11 && digits.startsWith("1")) return "+1"
 
   return ""
 }
 
+/**
+ * Extracts a phone number from a cell value. Preserves full digits (with
+ * country code if present). Falls back to last 10 digits for Indian-style
+ * numbers written without country code. Non-numeric values return empty.
+ */
 function extractMobileNumber(value: string) {
-  const phoneMatch = value.match(/(?:\+|00)?\s*\d[\d\s().-]{8,}\d/)
+  const phoneMatch = value.match(/(?:\+|00)?\s*\d[\d\s().-]{6,}\d/)
   const digits = (phoneMatch?.[0] ?? value).replace(/\D/g, "")
 
-  return normalizeIndianMobileDigits(digits)
+  if (digits.length >= 7 && digits.length <= 15) {
+    return digits
+  }
+
+  return ""
 }
 
 function formatIndianMobileDigits(value: string) {
-  return normalizeIndianMobileDigits(value.replace(/\D/g, ""))
+  return extractLast10Digits(value.replace(/\D/g, ""))
 }
 
-function normalizeIndianMobileDigits(digits: string) {
-  if (digits.length >= 10 && digits.length <= 14) {
-    const mobile = digits.slice(-10)
-    return /^[6-9]/.test(mobile) ? mobile : ""
+/**
+ * Strips all non-digit characters and returns the last 10 digits.
+ * India-specific — only meaningful when the number starts with 6-9.
+ */
+function extractLast10Digits(digits: string) {
+  if (digits.length >= 10 && digits.length <= 15) {
+    const last10 = digits.slice(-10)
+    return /^[6-9]/.test(last10) ? last10 : ""
   }
 
   return ""
 }
 
+const ESSENTIAL_FIELD_PATTERNS = [
+  /(^|_)?name(_|$)?/i,
+  /email/i,
+  /phone/i,
+  /mobile/i,
+  /whatsapp/i,
+  /contact/i,
+]
+
+/**
+ * Returns true for columns that should always be populated: name, email,
+ * phone, mobile, whatsapp, contact.
+ */
+export function isEssentialField(column: TemplateColumn) {
+  return ESSENTIAL_FIELD_PATTERNS.some(
+    (p) => p.test(column.key) || p.test(column.label),
+  )
+}
+
+/**
+ * Common misspelled CSV headers and their canonical forms.
+ * Used by normalizeMeaningKey() for fuzzy header matching.
+ */
+const HEADER_SYNONYMS: Record<string, string> = {
+  amunt: "amount",
+  borker: "broker",
+  campain: "campaign",
+  contri: "country",
+  craeted: "created",
+  cty: "city",
+  custmer: "customer",
+  deta: "date",
+  detials: "details",
+  intrsted: "interested",
+  mailid: "email",
+  mob: "mobile",
+  nam: "name",
+  nme: "name",
+  nts: "notes",
+  phne: "phone",
+  possesion: "possession",
+  projct: "project",
+  reamrks: "remarks",
+  sourse: "source",
+  stat: "state",
+  staus: "status",
+  tiem: "time",
+  txt: "text",
+  whatsp: "whatsapp",
+}
+
+/** Common spelling corrections applied to cell values during normalization. */
 const VALUE_SPELLING_FIXES: Array<[RegExp, string]> = [
   [/\bborker\b/gi, "broker"],
   [/\bbrokr\b/gi, "broker"],
@@ -515,6 +645,10 @@ const VALUE_SPELLING_FIXES: Array<[RegExp, string]> = [
   [/\bcampain\b/gi, "campaign"],
   [/\bcmapain\b/gi, "campaign"],
   [/\bcmapai\b/gi, "campaign"],
+  [/\bwebiste\b/gi, "website"],
+  [/\bwebstie\b/gi, "website"],
+  [/\bwebsit\b/gi, "website"],
+  [/\bbudjet\b/gi, "budget"],
   [/\bfacbook\b/gi, "facebook"],
   [/\bgoogel\b/gi, "google"],
   [/\blandng\b/gi, "landing"],
@@ -524,12 +658,22 @@ const VALUE_SPELLING_FIXES: Array<[RegExp, string]> = [
   [/\bintrsted\b/gi, "interested"],
   [/\bintrested\b/gi, "interested"],
   [/\bintersted\b/gi, "interested"],
+  [/\bcustmer\b/gi, "customer"],
+  [/\bcustmers\b/gi, "customers"],
+  [/\binstgram\b/gi, "instagram"],
+  [/\bprcie\b/gi, "price"],
+  [/\bpric\b/gi, "price"],
+  [/\bvisist\b/gi, "visit"],
+  [/\bvist\b/gi, "visit"],
+  [/\btomorow\b/gi, "tomorrow"],
+  [/\btommorow\b/gi, "tomorrow"],
   [/\bnumbr\b/gi, "number"],
   [/\bnumbrs\b/gi, "numbers"],
   [/\bphne\b/gi, "phone"],
   [/\btomorow\b/gi, "tomorrow"],
   [/\btommorow\b/gi, "tomorrow"],
   [/\bmornig\b/gi, "morning"],
+  [/\bafter\s+(\d+)\s+month\b/gi, "after $1 months"],
   [/\bweeknd\b/gi, "weekend"],
   [/\baftr\b/gi, "after"],
   [/\bmnths\b/gi, "months"],
@@ -540,12 +684,10 @@ const VALUE_SPELLING_FIXES: Array<[RegExp, string]> = [
   [/\bmumbia\b/gi, "Mumbai"],
 ]
 
-const HEADER_SYNONYMS: Record<string, string> = {
-  contri: "country",
-  cty: "city",
-  stat: "state",
-}
-
+/**
+ * Known location names used for splitting compound city/state/country strings.
+ * India-specific — extend COUNTRY_NAMES and INDIAN_STATE_NAMES for other regions.
+ */
 const COUNTRY_NAMES = ["India"]
 
 const INDIAN_STATE_NAMES = [

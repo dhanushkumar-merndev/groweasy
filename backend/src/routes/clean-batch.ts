@@ -8,6 +8,15 @@ import { requireCurrentUser } from "../middleware/auth.js"
 import { getUserDecryptedKey, shouldUseUserApiKey } from "./settings.js"
 import { logger } from "../lib/logger.js"
 
+/**
+ * Clean Batch route — external API for programmatic row cleaning.
+ *
+ * POST / — Accepts raw rows + template selection, returns cleaned rows
+ *   with field mapping and optional Groq retry for unclear rows.
+ *
+ * Pipeline: inferFieldMap → deterministic cleaning → Groq retry on failures
+ */
+
 type CleanBatchRequest = z.infer<typeof cleanBatchRequestSchema>
 type CleanBatchResult = z.infer<typeof cleanBatchResultSchema>
 type CleanBatchRow = CleanBatchResult["good_rows"][number]

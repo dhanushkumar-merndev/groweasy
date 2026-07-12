@@ -1,4 +1,5 @@
 const TEN_MINUTES_MS = 10 * 60 * 1000
+const CACHE_EVENT = "groweasy:client-cache"
 
 export const CLIENT_CACHE_KEYS = {
   analyticsList: "groweasy:analytics:list:v1",
@@ -13,6 +14,29 @@ type CacheRecord<T> = {
   value: T
 }
 
+const prefetchPromises = new Map<string, Promise<unknown>>()
+
+export function subscribeClientCache(key: string, callback: () => void) {
+  if (typeof window === "undefined") return () => {}
+
+  function onCacheEvent(event: Event) {
+    const detail = (event as CustomEvent<{ key?: string }>).detail
+    if (!detail?.key || detail.key === key) callback()
+  }
+
+  function onStorage(event: StorageEvent) {
+    if (event.key === key) callback()
+  }
+
+  window.addEventListener(CACHE_EVENT, onCacheEvent)
+  window.addEventListener("storage", onStorage)
+
+  return () => {
+    window.removeEventListener(CACHE_EVENT, onCacheEvent)
+    window.removeEventListener("storage", onStorage)
+  }
+}
+
 export function getClientCacheSnapshot(key: string): string | null {
   if (typeof window === "undefined") return null
 
@@ -23,12 +47,12 @@ export function getClientCacheSnapshot(key: string): string | null {
   }
 }
 
-export function parseClientCache<T>(raw: string | null): T | null {
+export function parseClientCache<T>(raw: string | null, options: { allowExpired?: boolean } = {}): T | null {
   if (!raw) return null
 
   try {
     const record = JSON.parse(raw) as CacheRecord<T>
-    if (!record.expiresAt || record.expiresAt <= Date.now()) {
+    if (!record.expiresAt || (!options.allowExpired && record.expiresAt <= Date.now())) {
       return null
     }
 
@@ -36,6 +60,10 @@ export function parseClientCache<T>(raw: string | null): T | null {
   } catch {
     return null
   }
+}
+
+export function hasFreshClientCache(key: string) {
+  return parseClientCache(getClientCacheSnapshot(key)) !== null
 }
 
 export function readClientCache<T>(key: string): T | null {
@@ -64,9 +92,38 @@ export function writeClientCache<T>(key: string, value: T, ttlMs = TEN_MINUTES_M
         value,
       } satisfies CacheRecord<T>),
     )
+    window.dispatchEvent(new CustomEvent(CACHE_EVENT, { detail: { key } }))
   } catch {
     // Storage can be unavailable or full. The page should still work without caching.
   }
+}
+
+export function prefetchCachedResource<T>({
+  cacheKey,
+  load,
+  force = false,
+}: {
+  cacheKey: string
+  load: () => Promise<T>
+  force?: boolean
+}) {
+  if (typeof window === "undefined") return Promise.resolve(null)
+  if (!force && hasFreshClientCache(cacheKey)) return Promise.resolve(readClientCache<T>(cacheKey))
+
+  const existing = prefetchPromises.get(cacheKey) as Promise<T> | undefined
+  if (existing) return existing
+
+  const promise = load()
+    .then((data) => {
+      writeClientCache(cacheKey, data)
+      return data
+    })
+    .finally(() => {
+      prefetchPromises.delete(cacheKey)
+    })
+
+  prefetchPromises.set(cacheKey, promise)
+  return promise
 }
 
 export function clearClientCache(...keys: string[]) {
@@ -75,6 +132,7 @@ export function clearClientCache(...keys: string[]) {
   for (const key of keys) {
     try {
       window.localStorage.removeItem(key)
+      window.dispatchEvent(new CustomEvent(CACHE_EVENT, { detail: { key } }))
     } catch {
       // Ignore storage failures; fresh fetches will still work.
     }

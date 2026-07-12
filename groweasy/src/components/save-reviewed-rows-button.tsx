@@ -19,6 +19,10 @@ export function SaveReviewedRowsButton({
   const [isPending, startTransition] = useTransition()
 
   async function saveRows() {
+    if (!window.confirm("Save these reviewed rows to the database and start a new upload?")) {
+      return
+    }
+
     startTransition(async () => {
       const rowsToSave = readReviewDraft(importId) ?? rows
 
@@ -34,9 +38,10 @@ export function SaveReviewedRowsButton({
           throw new Error(data.error?.message ?? "Unable to save rows.")
         }
 
-        window.sessionStorage.removeItem(reviewDraftKey(importId))
+        clearGrowEasySessionState()
         clearGrowEasyDataCache()
         toast.success(`Saved ${data.saved_rows ?? 0} good or fixed rows.`)
+        window.location.assign("/upload")
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Unable to save rows.")
       }
@@ -63,9 +68,23 @@ function readReviewDraft(importId: string) {
   }
 
   try {
-    return JSON.parse(rawDraft) as CleanedRow[]
+    const draft = JSON.parse(rawDraft) as CleanedRow[] | { rows?: CleanedRow[] }
+
+    if (Array.isArray(draft)) {
+      return draft
+    }
+
+    return Array.isArray(draft.rows) ? draft.rows : null
   } catch {
     window.sessionStorage.removeItem(reviewDraftKey(importId))
     return null
+  }
+}
+
+function clearGrowEasySessionState() {
+  for (const key of Object.keys(window.sessionStorage)) {
+    if (key.startsWith("groweasy-")) {
+      window.sessionStorage.removeItem(key)
+    }
   }
 }

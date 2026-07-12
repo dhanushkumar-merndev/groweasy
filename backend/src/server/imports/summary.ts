@@ -1,5 +1,9 @@
 import type { CleanedRow, ImportSheet, ImportSummary, SheetSummary } from "../../lib/types.js"
 
+/**
+ * Builds an ImportSummary from cleaned rows and sheet metadata.
+ * Counts good/missing/skipped by sheet and aggregates missing_by_field.
+ */
 export function summarizeCleanedRows(rows: CleanedRow[], sheets: ImportSheet[], blankRowsRemoved = 0): ImportSummary {
   const missingByField: Record<string, number> = {}
   const sheetSummary: SheetSummary[] = sheets.map((sheet) => {

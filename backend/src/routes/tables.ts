@@ -6,6 +6,16 @@ import { requireCurrentUser } from "../middleware/auth.js"
 import { store } from "../server/repositories/store.js"
 import { logger } from "../lib/logger.js"
 
+/**
+ * Tables route — CRUD for saved rows within an import.
+ *
+ * GET    /all                    — List all saved rows across all imports
+ * GET    /:importId/rows         — List saved rows for one import (paginated)
+ * POST   /:importId/rows         — Append a new saved row
+ * PATCH  /:importId/rows/:rowId  — Update a saved row's cleaned_data
+ * DELETE /:importId/rows/:rowId  — Delete a saved row
+ */
+
 const router = Router()
 
 router.get("/all", async (req, res) => {

@@ -7,6 +7,13 @@ import { store } from "../server/repositories/store.js"
 import { exportRowsToGoogleSheet, importRowsFromGoogleSheet } from "../server/google/sheets.js"
 import { logger } from "../lib/logger.js"
 
+/**
+ * Google Sheets integration route — export saved rows and import from sheets.
+ *
+ * POST /export — Push saved rows to a Google Sheet via service account
+ * POST /import — Import rows from a Google Sheet (endpoint ready, implementation stub)
+ */
+
 const router = Router()
 
 router.post("/export", async (req, res) => {

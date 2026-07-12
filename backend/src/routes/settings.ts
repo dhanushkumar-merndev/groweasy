@@ -8,6 +8,21 @@ import { encrypt, decrypt } from "../lib/crypto.js"
 import { logger } from "../lib/logger.js"
 import { getSupabaseServiceClient } from "../server/db/supabase.js"
 
+/**
+ * Settings route — user AI API key management and batch tuning.
+ *
+ * POST  /apikey        — Save user AI provider key (encrypted at rest)
+ * DELETE /apikey       — Remove saved key
+ * POST  /apikey/mode   — Toggle use-user-key vs platform default
+ * POST  /review-mode   — Toggle detailed AI review mode
+ * GET   /apikey        — Get masked key status
+ * GET   /ai            — Get AI batch settings and recommendations
+ * POST  /ai            — Update AI batch/request batch sizes
+ *
+ * Exports: getUserDecryptedKey(), shouldUseUserApiKey(), hasActiveUserApiKey(),
+ *          getUserAiSettings()
+ */
+
 const router = Router()
 
 const AI_BATCH_LIMITS_BASE = {
@@ -329,6 +344,13 @@ type DbUserAiSettings = {
   request_batch_size: number | null
 }
 
+function isMissingUserAiSettingsTable(error: unknown) {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "PGRST205"
+}
+
 async function getDbUserAiSettings(userId: string): Promise<DbUserAiSettings | null> {
   const supabase = getSupabaseServiceClient()
   if (!supabase) return null
@@ -340,6 +362,12 @@ async function getDbUserAiSettings(userId: string): Promise<DbUserAiSettings | n
     .maybeSingle()
 
   if (error) {
+    // Older Supabase environments may not have the table yet. Reads should
+    // fall back quietly so the settings page can still render.
+    if (isMissingUserAiSettingsTable(error)) {
+      return null
+    }
+
     logger.warn({ error, userId }, "Failed to load user AI settings from DB")
     return null
   }
@@ -360,6 +388,10 @@ async function upsertUserAiSettings(userId: string, patch: Partial<Omit<DbUserAi
     }, { onConflict: "user_id" })
 
   if (error) {
+    if (isMissingUserAiSettingsTable(error)) {
+      throw new Error("Supabase table public.user_ai_settings is missing. Apply the latest database migration before saving settings.")
+    }
+
     logger.warn({ error, userId }, "Failed to save user AI settings to DB")
     throw error
   }

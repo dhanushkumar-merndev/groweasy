@@ -2,6 +2,12 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 
 import { logger } from "../../lib/logger.js"
 
+/**
+ * Supabase service client — lazy-init singleton using service_role key.
+ * Returns null if NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY
+ * are not configured, allowing the app to run without a database.
+ */
+
 let serviceClient: SupabaseClient | null = null
 
 export function getSupabaseServiceClient() {

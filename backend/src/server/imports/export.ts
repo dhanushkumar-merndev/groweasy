@@ -3,6 +3,11 @@ import ExcelJS from "exceljs"
 import type { CellValue, SavedRow, Template } from "../../lib/types.js"
 import { logger } from "../../lib/logger.js"
 
+/**
+ * Excel export builder — generates .xlsx workbooks from saved rows.
+ * Supports single-sheet and multi-sheet (same_tabs) export modes.
+ * Formula-like cell values are sanitized with a ' prefix.
+ */
 export async function buildExcelExport(input: {
   rows: SavedRow[]
   template: Template

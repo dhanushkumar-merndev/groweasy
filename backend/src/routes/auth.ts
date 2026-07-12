@@ -3,11 +3,17 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { decodeJwt } from "jose"
 
 import { auth, isAuthConfigured } from "../server/auth/auth.js"
-import { systemUserId } from "../lib/default-template.js"
-import { store } from "../server/repositories/store.js"
 import { handleRouteError, jsonOk } from "../server/api.js"
 import { logger } from "../lib/logger.js"
 import { getSupabaseServiceClient } from "../server/db/supabase.js"
+
+/**
+ * Auth routes — session resolution and Better Auth handler mount.
+ *
+ * GET  /config — Returns auth/redis/groq configuration status
+ * GET  /me     — Returns the current session user or null
+ * ALL  /*      — Proxied to Better Auth (sign-in, sign-out, callbacks)
+ */
 
 type GoogleIdTokenPayload = {
   picture?: unknown
@@ -25,18 +31,6 @@ router.get("/config", (_req, res) => {
 
 router.get("/me", async (req, res) => {
   try {
-    if (!isAuthConfigured()) {
-      return jsonOk(res, {
-        user: {
-          id: systemUserId,
-          name: "Demo User",
-          email: "demo@groweasy.local",
-          image: null,
-          isDemo: true,
-        },
-      })
-    }
-
     const session = await auth.api
       .getSession({ headers: fromNodeHeaders(req.headers) })
       .catch(() => null)
@@ -55,7 +49,6 @@ router.get("/me", async (req, res) => {
         name: session.user.name ?? "User",
         email: session.user.email ?? "",
         image,
-        isDemo: false,
       },
     })
   } catch (error) {

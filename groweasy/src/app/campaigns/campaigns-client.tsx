@@ -28,7 +28,9 @@ type CampaignsCache = {
 }
 
 function summarizeTemplates({ imports, templates }: CampaignsCache) {
-  return templates.map((template) => {
+  const uniqueTemplates = [...new Map(templates.map((template) => [template.id, template])).values()]
+
+  return uniqueTemplates.map((template) => {
     const templateImports = imports.filter((job) => job.template_id === template.id)
     const savedTemplateImports = templateImports.filter((job) => job.status === "saved")
     const savedRows = savedTemplateImports.reduce((total, job) => total + job.final_saved_count, 0)

@@ -4,6 +4,14 @@ import { ZodError, type ZodSchema } from "zod"
 import type { ApiError } from "../lib/types.js"
 import { logger } from "../lib/logger.js"
 
+/**
+ * Shared API utilities used by every route handler.
+ *
+ * - jsonOk / jsonError — typed JSON response helpers
+ * - parseJsonBody — Zod validation wrapper that throws RequestValidationError
+ * - handleRouteError — catch-all error handler for route try/catch blocks
+ */
+
 export function jsonOk<T>(res: Response, data: T, status = 200) {
   return res.status(status).json(data)
 }

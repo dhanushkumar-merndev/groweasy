@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { KeyRoundIcon, LoaderIcon, SaveIcon, TrashIcon } from "lucide-react"
+import { KeyRoundIcon, SaveIcon, TrashIcon } from "lucide-react"
 import { toast } from "sonner"
 
+import { SettingsPanelSkeleton } from "@/components/skeletons/page-skeletons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -67,14 +68,21 @@ export function ApiKeyManager() {
   const [savedInfo, setSavedInfo] = useState<{ provider: string; model: string } | null>(null)
   const [useUserApiKey, setUseUserApiKey] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [savingMode, setSavingMode] = useState(false)
   const [saving, setSaving] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false)
   const [removeConfirmation, setRemoveConfirmation] = useState("")
 
   async function loadApiKeySettings() {
-    const data: ApiKeyResponse = await api("/settings/apikey")
-      .then((r) => r.json())
+    const response = await api("/settings/apikey")
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error?.error ?? "Unable to load API key settings")
+    }
+
+    const data: ApiKeyResponse = await response.json()
 
     setUseUserApiKey(Boolean(data.useUserApiKey))
     if (data.hasKey) {
@@ -89,18 +97,35 @@ export function ApiKeyManager() {
   }
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      loadApiKeySettings()
-        .catch(() => {
-          toast.error("Unable to load API key settings")
-        })
-        .finally(() => setLoading(false))
-    }, 0)
+    let active = true
 
-    return () => window.clearTimeout(timer)
+    async function hydrateApiKeySettings() {
+      setLoading(true)
+      setLoadError(null)
+
+      try {
+        await loadApiKeySettings()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to load API key settings"
+        if (!active) return
+        setLoadError(message)
+        toast.error(message)
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void hydrateApiKeySettings()
+
+    return () => {
+      active = false
+    }
   }, [])
 
   function refreshSettingsPanels() {
+    // Keep the sibling settings card in sync after API-key changes.
     window.dispatchEvent(new Event("ai-settings-changed"))
   }
 
@@ -162,11 +187,13 @@ export function ApiKeyManager() {
 
   async function handleModeChange(checked: boolean) {
     setUseUserApiKey(checked)
+    setSavingMode(true)
     const res = await api("/settings/apikey/mode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ useUserApiKey: checked }),
     })
+    setSavingMode(false)
 
     if (res.ok) {
       toast.success(checked ? "Using your API key" : "Using default API keys")
@@ -178,30 +205,33 @@ export function ApiKeyManager() {
   }
 
   const hasExisting = !!savedInfo
+  const hasApiKeyChanges = hasExisting
+    ? provider !== savedInfo?.provider || model !== savedInfo?.model || key.trim().length > 0
+    : key.trim().length > 0
 
   return (
     <>
+    {loading ? <SettingsPanelSkeleton rows={3} /> : (
     <Card className="overflow-hidden py-0">
-      <CardHeader className="flex flex-row items-center justify-between gap-3 border-b px-5 py-4">
-        <div>
+      <CardHeader className="flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <CardTitle className="text-base">Your AI provider</CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">Controls row processing, analytics, and upload limits.</p>
         </div>
         {!loading ? (
-          <Badge variant={useUserApiKey && hasExisting ? "default" : "secondary"}>
+          <Badge className="shrink-0" variant={useUserApiKey && hasExisting ? "default" : "secondary"}>
             {useUserApiKey && hasExisting ? "Custom key active" : "Default keys"}
           </Badge>
         ) : null}
       </CardHeader>
       <CardContent className="grid gap-4 p-5">
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <LoaderIcon className="size-4 animate-spin" />
-            Loading...
+        {loadError ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            {loadError}
           </div>
         ) : (
           <div className="grid gap-4">
-            <div className="flex items-center justify-between gap-4 rounded-md border bg-muted/15 px-4 py-3">
+            <div className="flex flex-col gap-4 rounded-md border bg-muted/15 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid size-8 place-items-center rounded-md bg-primary/10 text-primary">
                   <KeyRoundIcon className="size-4" />
@@ -220,8 +250,9 @@ export function ApiKeyManager() {
                 type="button"
                 role="switch"
                 aria-checked={useUserApiKey}
+                disabled={savingMode}
                 onClick={() => void handleModeChange(!useUserApiKey)}
-                className="relative h-7 w-12 shrink-0 rounded-full border border-input bg-muted transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:border-primary aria-checked:bg-primary"
+                className="relative h-7 w-12 shrink-0 rounded-full border border-input bg-muted transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 aria-checked:border-primary aria-checked:bg-primary"
               >
                 <span className="absolute top-1 left-1 size-5 rounded-full bg-background shadow-sm transition-transform aria-checked:translate-x-5" aria-checked={useUserApiKey} />
               </button>
@@ -229,7 +260,7 @@ export function ApiKeyManager() {
 
             <fieldset disabled={!useUserApiKey} className="grid gap-3 disabled:opacity-45">
               <div className="rounded-md border">
-                <div className="grid border-b md:grid-cols-3">
+                <div className="grid border-b sm:grid-cols-3">
                   <SettingSummary label="Status" value={hasExisting ? "Saved" : "No key"} />
                   <SettingSummary label="Provider" value={PROVIDER_MODELS[provider]?.label ?? provider} />
                   <SettingSummary label="Model" value={models.find((item) => item.value === model)?.label ?? model} />
@@ -238,7 +269,7 @@ export function ApiKeyManager() {
                   <div className="grid gap-2">
                     <RequiredLabel>Provider</RequiredLabel>
                     <Select value={provider} onValueChange={handleProviderChange}>
-                      <SelectTrigger>
+                      <SelectTrigger className="w-full min-w-0">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -251,7 +282,7 @@ export function ApiKeyManager() {
                   <div className="grid gap-2">
                     <RequiredLabel>Model</RequiredLabel>
                     <Select value={model} onValueChange={(v) => v && setModel(v)}>
-                      <SelectTrigger>
+                      <SelectTrigger className="w-full min-w-0">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -273,7 +304,7 @@ export function ApiKeyManager() {
                     <p className="text-xs text-muted-foreground">
                       {provider === "cloudflare"
                         ? "Use accountId:api-token."
-                        : "Required for your own Groq processing."}
+                        : ""}
                     </p>
                   </div>
                 </div>
@@ -283,9 +314,9 @@ export function ApiKeyManager() {
                   {hasExisting ? "Leave the key field blank to keep the current saved key." : "Save a key before processing larger uploads."}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                <Button onClick={handleSave} disabled={saving || (!key.trim() && !hasExisting)}>
+                <Button onClick={handleSave} disabled={saving || !useUserApiKey || !hasApiKeyChanges}>
                   <SaveIcon />
-                  {saving ? "Saving..." : hasExisting ? "Update" : "Save key"}
+                  {saving ? "Saving..." : hasExisting ? (hasApiKeyChanges ? "Update" : "Updated") : "Save key"}
                 </Button>
                 {hasExisting && (
                   <Button variant="destructive" onClick={() => setRemoveDialogOpen(true)}>
@@ -307,6 +338,7 @@ export function ApiKeyManager() {
         )}
       </CardContent>
     </Card>
+    )}
     <Dialog
       open={removeDialogOpen}
       onOpenChange={(open) => {
@@ -362,7 +394,7 @@ function SettingSummary({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 px-4 py-3">
       <div className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate text-sm font-medium">{value}</div>
+      <div className="mt-1 truncate text-sm font-medium" title={value}>{value}</div>
     </div>
   )
 }

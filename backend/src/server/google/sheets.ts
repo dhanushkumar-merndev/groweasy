@@ -3,6 +3,13 @@ import { google } from "googleapis"
 import type { SavedRow, Template } from "../../lib/types.js"
 import { logger } from "../../lib/logger.js"
 
+/**
+ * Google Sheets integration via service account JWT.
+ * Reads GOOGLE_SHEETS_CLIENT_EMAIL and GOOGLE_SHEETS_PRIVATE_KEY from env.
+ * Export builds header + row matrix and writes via sheets.spreadsheets.values.update.
+ * Import endpoint is a stub — returns empty rows with a configuration message.
+ */
+
 export function isGoogleSheetsConfigured() {
   const configured = Boolean(
     process.env.GOOGLE_SHEETS_CLIENT_EMAIL &&

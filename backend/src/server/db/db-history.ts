@@ -5,6 +5,13 @@ import { Pool } from "pg"
 
 import { logger } from "../../lib/logger.js"
 
+/**
+ * Database utilities — schema migration and history log persistence.
+ *
+ * Pool is created once at module level (cold start). History queries always
+ * filter by userId — no cross-user data exposure.
+ */
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 5,
@@ -17,14 +24,31 @@ export async function ensureSchema() {
       "../../../../groweasy/supabase/schema.sql",
     )
     const sql = readFileSync(schemaPath, "utf8")
-    await pool.query(sql)
-    logger.info("Database schema ensured")
-  } catch (error: any) {
-    if (error?.code === "42710") {
-      logger.debug("Schema policies already exist (42710) — skipping")
-    } else {
-      logger.warn({ error }, "Failed to ensure DB schema — DB may not be available")
+
+    // Split into individual statements so a policy-already-exists error (42710)
+    // doesn't roll back CREATE TABLE IF NOT EXISTS statements.
+    const statements = sql
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean)
+
+    for (const stmt of statements) {
+      try {
+        await pool.query(`${stmt};`)
+      } catch (error: any) {
+        if (error?.code === "42710") {
+          logger.debug("Schema policy already exists — skipping")
+        } else if (error?.code === "42P07") {
+          logger.debug("Schema object already exists — skipping")
+        } else {
+          logger.warn({ error, stmt: stmt.slice(0, 80) }, "Schema statement failed")
+        }
+      }
     }
+
+    logger.info("Database schema ensured")
+  } catch (error) {
+    logger.warn({ error }, "Failed to ensure DB schema — DB may not be available")
   }
 }
 

@@ -1,9 +1,19 @@
+/**
+ * Shared type definitions for the GrowEasy backend.
+ *
+ * Covers the full data model: templates, imports, rows, history, analytics,
+ * validation, and cache envelopes. These types are consumed by the in-memory
+ * store, Supabase repositories, API routes, and the Zod schemas in schemas.ts.
+ */
+
 export type CellValue = string | number | boolean | null
 
 export type RowData = Record<string, CellValue>
 
+/** Normalized status after deterministic cleaning. "skipped" rows bypass AI. */
 export type RowStatus = "good" | "missing" | "skipped"
 
+/** Lifecycle states for an import job, from upload through final save. */
 export type ImportStatus =
   | "uploaded"
   | "validated"
@@ -12,6 +22,7 @@ export type ImportStatus =
   | "saved"
   | "failed"
 
+/** Validation rules applied to a template column during cleaning. */
 export type FormattingRule =
   | "uppercase"
   | "lowercase"
@@ -35,6 +46,7 @@ export type FormattingRule =
   | "dict_lookup"
   | "dict_lookup_with_default"
 
+/** User-defined column in a cleaning template. */
 export type TemplateColumn = {
   key: string
   label: string
@@ -44,6 +56,7 @@ export type TemplateColumn = {
   export_title: string
 }
 
+/** Cleaning template — the schema that maps raw CSV columns to formatted CRM fields. */
 export type Template = {
   id: string
   user_id: string
@@ -54,6 +67,7 @@ export type Template = {
   updated_at: string
 }
 
+/** Parsed spreadsheet sheet metadata. */
 export type ImportSheet = {
   id: string
   import_id: string
@@ -76,6 +90,7 @@ export type SheetSummary = {
   skipped_count: number
 }
 
+/** Aggregated counts for a single import, stored on the import job. */
 export type ImportSummary = {
   total_rows: number
   good_count: number
@@ -90,6 +105,7 @@ export type ImportSummary = {
   sheet_summary: SheetSummary[]
 }
 
+/** Full import job, extends ImportSummary with metadata. */
 export type ImportJob = ImportSummary & {
   id: string
   user_id: string
@@ -104,6 +120,7 @@ export type ImportJob = ImportSummary & {
   updated_at: string
 }
 
+/** Single raw row as parsed from an uploaded spreadsheet. */
 export type RawImportRow = {
   id: string
   import_id: string
@@ -114,6 +131,7 @@ export type RawImportRow = {
   raw_data: RowData
 }
 
+/** AI-applied change logged on a cleaned row. */
 export type AiCellChange = {
   field: string
   before: string | null
@@ -121,6 +139,7 @@ export type AiCellChange = {
   reason: string
 }
 
+/** Row after deterministic + AI cleaning, with status and change log. */
 export type CleanedRow = RawImportRow & {
   cleaned_data: RowData
   status: RowStatus
@@ -129,6 +148,7 @@ export type CleanedRow = RawImportRow & {
   ai_changes: AiCellChange[]
 }
 
+/** Persisted row after final save, synced to Supabase. */
 export type SavedRow = {
   id: string
   user_id: string
@@ -154,6 +174,7 @@ export type AiBatchResult = {
   }
 }
 
+/** Warning codes emitted during spreadsheet parsing. */
 export type ValidationWarning = {
   code:
     | "blank_sheet"
@@ -167,6 +188,7 @@ export type ValidationWarning = {
   count: number
 }
 
+/** Result of spreadsheet parsing, used as input to the cleaning pipeline. */
 export type ValidationResult = {
   import_id: string
   rows: RawImportRow[]
@@ -191,6 +213,7 @@ export type HistoryAction =
   | "export_done"
   | "google_sheet_export_done"
 
+/** Immutable audit log entry recorded after every import lifecycle event. */
 export type HistoryLog = {
   id: string
   user_id: string
@@ -207,6 +230,9 @@ export type ChartType =
   | "horizontal_bar"
   | "vertical_bar"
   | "area"
+  | "radar"
+  | "radial_bar"
+
 
 export type AnalyticsConfig = {
   import_id: string
@@ -218,6 +244,7 @@ export type AnalyticsConfig = {
   filters: Record<string, string>
 }
 
+/** Redis cache wrapper with TTL metadata for stale-while-revalidate. */
 export type CacheEnvelope<T> = {
   cached_at: string
   expires_at: string
@@ -225,6 +252,7 @@ export type CacheEnvelope<T> = {
   data: T
 }
 
+/** Standardized error response envelope sent to all API clients. */
 export type ApiError = {
   error: {
     code: string

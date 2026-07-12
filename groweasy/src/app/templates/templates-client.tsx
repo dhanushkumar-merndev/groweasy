@@ -44,11 +44,12 @@ export function TemplatesClient() {
 }
 
 function TemplateGrid({ templates }: { templates: Template[] }) {
-  const isDemo = (template: Template) => template.user_id === "demo-user"
+  const isSystem = (template: Template) => template.user_id === "system"
+  const uniqueTemplates = [...new Map(templates.map((template) => [template.id, template])).values()]
 
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {templates.map((template) => {
+      {uniqueTemplates.map((template) => {
         const inner = (
           <div className="flex flex-1 flex-col gap-4 p-4">
             <div className="flex items-start justify-between gap-3">
@@ -59,7 +60,7 @@ function TemplateGrid({ templates }: { templates: Template[] }) {
                 </p>
               </div>
               <Badge variant="outline">
-                {isDemo(template) ? (
+                {isSystem(template) ? (
                   <>
                     <LockIcon className="size-3" />
                     Locked
@@ -77,14 +78,14 @@ function TemplateGrid({ templates }: { templates: Template[] }) {
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              {isDemo(template)
+              {isSystem(template)
                 ? "Default CRM schema used for upload cleaning."
                 : "Custom schema for upload cleaning."}
             </p>
           </div>
         )
 
-        if (isDemo(template)) {
+        if (isSystem(template)) {
           return (
             <Card key={template.id} className="py-0">
               {inner}

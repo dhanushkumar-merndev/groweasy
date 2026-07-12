@@ -1,3 +1,13 @@
+/**
+ * Zod validation schemas for all API request/response shapes.
+ *
+ * Every schema here is used by parseJsonBody() in server/api.ts to validate
+ * incoming payloads before they reach route handlers. Schemas ending in
+ * "Schema" are full validation schemas; those ending in "InputSchema" are
+ * used for POST/PATCH bodies; those without a suffix are leaf types composed
+ * by larger schemas.
+ */
+
 import { z } from "zod"
 import type { ChartType, FormattingRule, RowData, RowStatus } from "../lib/types.js"
 
@@ -29,6 +39,7 @@ export const rowStatusSchema = z.enum(["good", "missing", "skipped"]) satisfies 
 
 const cellValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()])
 
+/** Free-form key-value row data — values can be string, number, boolean, or null. */
 export const rowDataSchema = z.record(z.string(), cellValueSchema) satisfies z.ZodType<RowData>
 
 export const aiCellChangeSchema = z.object({
@@ -38,6 +49,11 @@ export const aiCellChangeSchema = z.object({
   reason: z.string(),
 })
 
+/**
+ * Raw import row with all optional fields — supports both raw_data and
+ * legacy data keys. The transform normalizes the 4 possible ID/sheet/index
+ * sources into a consistent shape.
+ */
 export const rawImportRowSchema = z.object({
   id: z.string().optional(),
   import_id: z.string().optional(),
@@ -82,6 +98,7 @@ export const cleanedRowSchema = z.object({
   ai_changes: z.array(aiCellChangeSchema).default([]),
 })
 
+/** Template column config — validated on template create/update. */
 export const templateColumnSchema = z.object({
   key: z.string().min(1).regex(/^[a-z0-9_]+$/),
   label: z.string().min(1),
@@ -190,6 +207,7 @@ export const exportExcelSchema = z.object({
   search: z.string().optional(),
 })
 
+/** Template column definition for the Clean Batch external API. */
 export const cleanBatchTemplateColumnSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
@@ -197,6 +215,11 @@ export const cleanBatchTemplateColumnSchema = z.object({
   required: z.boolean().default(false),
 })
 
+/**
+ * Inbound Clean Batch request — external API contract used by Groweasy
+ * integrations. Rows are provided as {source_sheet, source_sheet_index,
+ * source_row_index, data}.
+ */
 export const cleanBatchRequestSchema = z.object({
   batch_id: z.string().min(1),
   selected_template: z.object({
@@ -213,6 +236,7 @@ export const cleanBatchRequestSchema = z.object({
   ),
 })
 
+/** Single row output from the Clean Batch API. */
 export const cleanBatchOutputRowSchema = z.object({
   source_sheet: z.string(),
   source_sheet_index: z.number().int().min(0),
@@ -224,6 +248,7 @@ export const cleanBatchOutputRowSchema = z.object({
   ai_changes: z.array(aiCellChangeSchema).default([]),
 })
 
+/** Full Clean Batch API response envelope. */
 export const cleanBatchResultSchema = z.object({
   batch_id: z.string(),
   good_rows: z.array(cleanBatchOutputRowSchema),

@@ -1,12 +1,8 @@
-import { Suspense } from "react"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ArrowLeftIcon, InboxIcon } from "lucide-react"
-
 import { AppShell } from "@/components/app-shell"
-import { TableWorkspaceSkeleton } from "@/components/skeletons/page-skeletons"
 import { VirtualTable } from "@/components/virtual-table"
-import { StatusCountCards } from "@/components/status-count-cards"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { serverFetch } from "@/lib/server-api"
@@ -18,17 +14,6 @@ export default async function CampaignDetailPage({
   params: Promise<{ templateId: string }>
 }) {
   const { templateId } = await params
-
-  return (
-    <AppShell title="Campaign" description="Editable saved rows table.">
-      <Suspense fallback={<TableWorkspaceSkeleton />}>
-        <CampaignDetailContent templateId={templateId} />
-      </Suspense>
-    </AppShell>
-  )
-}
-
-async function CampaignDetailContent({ templateId }: { templateId: string }) {
   const [{ template }, { imports }] = await Promise.all([
     serverFetch<{ template: Template | null }>(`/templates/${templateId}`),
     serverFetch<{ imports: ImportJob[] }>("/imports"),
@@ -38,6 +23,20 @@ async function CampaignDetailContent({ templateId }: { templateId: string }) {
     notFound()
   }
 
+  return (
+    <AppShell title={template.name} description="Editable saved rows table.">
+      <CampaignDetailContent template={template} imports={imports} />
+    </AppShell>
+  )
+}
+
+async function CampaignDetailContent({
+  template,
+  imports,
+}: {
+  template: Template
+  imports: ImportJob[]
+}) {
   const templateImports = imports.filter((job) => job.template_id === template.id)
   const rowGroups = await Promise.all(
     templateImports.map(async (job) => {
@@ -52,20 +51,9 @@ async function CampaignDetailContent({ templateId }: { templateId: string }) {
     }),
   )
   const rows = rowGroups.flat()
-  const summary = {
-    good_count: rows.length,
-    missing_count: 0,
-    skipped_count: 0,
-    ai_changed_count: rows.reduce((total, row) => total + row.ai_changes.length, 0),
-  }
 
   return (
     <>
-      <div className="grid gap-1">
-        <h2 className="text-lg font-semibold tracking-normal">{template.name}</h2>
-        <p className="text-sm text-muted-foreground">Editable saved rows table.</p>
-      </div>
-
       <div className="flex items-center justify-between gap-3">
         <Button
           variant="ghost"
@@ -77,8 +65,6 @@ async function CampaignDetailContent({ templateId }: { templateId: string }) {
           Campaigns
         </Button>
       </div>
-
-      <StatusCountCards summary={summary} />
 
       {rows.length === 0 || templateImports.length === 0 ? (
         <Card>

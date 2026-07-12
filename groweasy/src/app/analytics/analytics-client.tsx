@@ -3,7 +3,6 @@
 import * as React from "react"
 import Link from "next/link"
 import { ArrowRightIcon, BarChart3Icon, InboxIcon, Rows3Icon, SparklesIcon, Table2Icon } from "lucide-react"
-
 import { TemplateCardsSkeleton } from "@/components/skeletons/page-skeletons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,30 +13,75 @@ import { useCachedResource } from "@/hooks/use-cached-resource"
 import type { ImportJob, Template } from "@/lib/types"
 
 const CACHE_KEY = CLIENT_CACHE_KEYS.analyticsList
+const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+})
 
 type AnalyticsCache = {
   imports: ImportJob[]
   templates: Template[]
 }
 
-function summarizeTemplates({ imports, templates }: AnalyticsCache) {
-  return templates.map((template) => {
-    const templateImports = imports.filter((job) => job.template_id === template.id)
-    const savedTemplateImports = templateImports.filter((job) => job.status === "saved")
-    const savedRows = savedTemplateImports.reduce((total, job) => total + job.final_saved_count, 0)
-    const lastUpdated = savedTemplateImports
-      .map((job) => job.updated_at)
-      .sort()
-      .at(-1)
+type TemplateSummary = {
+  template: Template
+  imports: number
+  savedRows: number
+  fields: number
+  lastUpdated: string | null
+}
 
-    return {
-      template,
-      imports: templateImports.length,
-      savedRows,
-      fields: template.columns_config.length,
-      lastUpdated,
+function summarizeTemplates({ imports, templates }: AnalyticsCache) {
+  const uniqueTemplates = [...new Map(templates.map((template) => [template.id, template])).values()]
+
+  // Group once so each card can be derived without repeatedly scanning the full import list.
+  const importsByTemplate = new Map<string, ImportJob[]>()
+
+  for (const job of imports) {
+    const templateImports = importsByTemplate.get(job.template_id)
+
+    if (templateImports) {
+      templateImports.push(job)
+      continue
     }
-  })
+
+    importsByTemplate.set(job.template_id, [job])
+  }
+
+  return uniqueTemplates
+    .map<TemplateSummary>((template) => {
+      const templateImports = importsByTemplate.get(template.id) ?? []
+      let savedRows = 0
+      let lastUpdated: string | null = null
+
+      // Saved imports are the only ones that contribute rows to analytics.
+      for (const job of templateImports) {
+        if (job.status !== "saved") continue
+
+        savedRows += job.final_saved_count
+
+        if (!lastUpdated || job.updated_at > lastUpdated) {
+          lastUpdated = job.updated_at
+        }
+      }
+
+      return {
+        template,
+        imports: templateImports.length,
+        savedRows,
+        fields: template.columns_config.length,
+        lastUpdated,
+      }
+    })
+    // Show the most useful analytics entry points first, then fall back to a stable name order.
+    .sort((a, b) => {
+      if (b.savedRows !== a.savedRows) return b.savedRows - a.savedRows
+      if (a.lastUpdated && b.lastUpdated) return b.lastUpdated.localeCompare(a.lastUpdated)
+      if (b.lastUpdated) return 1
+      if (a.lastUpdated) return -1
+      return a.template.name.localeCompare(b.template.name)
+    })
 }
 
 async function loadAnalyticsData() {
@@ -63,6 +107,10 @@ export function AnalyticsClient() {
     cacheKey: CACHE_KEY,
     load: loadAnalyticsData,
   })
+  const templateSummaries = React.useMemo(
+    () => (data ? summarizeTemplates(data) : []),
+    [data],
+  )
 
   if (loading && !data) return <TemplateCardsSkeleton />
 
@@ -75,8 +123,6 @@ export function AnalyticsClient() {
       </Card>
     )
   }
-
-  const templateSummaries = data ? summarizeTemplates(data) : []
 
   return templateSummaries.length === 0 ? (
     <Card>
@@ -97,7 +143,9 @@ export function AnalyticsClient() {
               <div className="grid gap-1">
                 <CardTitle className="text-lg">{summary.template.name}</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  {summary.lastUpdated ? `Updated ${new Date(summary.lastUpdated).toLocaleDateString()}` : "No saved rows yet"}
+                  {summary.lastUpdated
+                    ? `Updated ${DATE_FORMATTER.format(new Date(summary.lastUpdated))}`
+                    : "No saved rows yet"}
                 </p>
               </div>
               <Badge variant="outline">

@@ -1,5 +1,10 @@
 import type { CleanedRow, RawImportRow, Template, TemplateColumn } from "../../lib/types.js"
 
+/**
+ * Learned source hints — analyzes which raw CSV headers mapped to which
+ * template columns during cleaning, and returns candidate hints to add
+ * to the template's source_hints for future uploads.
+ */
 type LearnedHints = Record<string, string[]>
 
 export function learnTemplateSourceHints(input: {

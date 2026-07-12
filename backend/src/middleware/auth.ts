@@ -2,31 +2,36 @@ import type { NextFunction, Request, Response } from "express"
 import { fromNodeHeaders } from "better-auth/node"
 import { createHash } from "node:crypto"
 
-import { auth, isAuthConfigured } from "../server/auth/auth.js"
-import { systemUserId } from "../lib/default-template.js"
+import { auth } from "../server/auth/auth.js"
 import { logger } from "../lib/logger.js"
 import { AUTH_USER_CACHE_TTL_SECONDS, authUserCacheKey, getCache, setCache } from "../server/redis/cache.js"
 
+/**
+ * Authenticated user shape attached to req.user by authMiddleware.
+ */
 export type CurrentUser = {
   id: string
   name: string
   email: string
   image?: string | null
-  isDemo: boolean
 }
 
-export async function requireCurrentUser(req: Request): Promise<CurrentUser> {
-  if (!isAuthConfigured()) {
-    logger.info("Auth not configured, using demo user")
-    return {
-      id: systemUserId,
-      name: "Demo User",
-      email: "demo@groweasy.local",
-      image: null,
-      isDemo: true,
+declare global {
+  namespace Express {
+    interface Request {
+      user?: CurrentUser
     }
   }
+}
 
+/**
+ * Resolves the current user from the Better Auth session cookie.
+ * Checks Redis cache first, falls back to Better Auth DB lookup,
+ * then caches the result for subsequent requests.
+ *
+ * Throws "UNAUTHORIZED" if no valid session exists.
+ */
+export async function requireCurrentUser(req: Request): Promise<CurrentUser> {
   const userCacheKey = getCurrentUserCacheKey(req.headers.cookie)
   const cachedUser = userCacheKey ? await getCache<CurrentUser>(userCacheKey) : null
   if (cachedUser?.id) {
@@ -50,21 +55,25 @@ export async function requireCurrentUser(req: Request): Promise<CurrentUser> {
     name: session.user.name ?? "User",
     email: session.user.email ?? "",
     image: session.user.image,
-    isDemo: false,
   }
 
   if (userCacheKey) {
-    await setCache(userCacheKey, user, AUTH_USER_CACHE_TTL_SECONDS)
+    await setCache(userCacheKey, user, AUTH_USER_CACHE_TTL_SECONDS).catch((err) => {
+      logger.warn({ err }, "Failed to cache user session in Redis — non-fatal")
+    })
   }
 
   logger.info({ userId: session.user.id, source: "db" }, "User authenticated")
   return user
 }
 
+/**
+ * Express middleware — attaches CurrentUser to req.user or returns 401.
+ */
 export function authMiddleware(req: Request, res: Response, next: NextFunction) {
   requireCurrentUser(req)
     .then((user) => {
-      ;(req as unknown as Record<string, unknown>).user = user
+      req.user = user
       next()
     })
     .catch(() => {
@@ -74,6 +83,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     })
 }
 
+/** Builds a stable Redis cache key from the Better Auth session cookie. */
 function getCurrentUserCacheKey(cookieHeader: string | undefined) {
   const token = getCookie(cookieHeader, "better-auth.session_token")
     ?? getCookie(cookieHeader, "__Secure-better-auth.session_token")
@@ -84,6 +94,7 @@ function getCurrentUserCacheKey(cookieHeader: string | undefined) {
   return authUserCacheKey(sessionHash)
 }
 
+/** Extracts a named cookie value from a raw Cookie header string. */
 function getCookie(cookieHeader: string | undefined, name: string) {
   if (!cookieHeader) return null
 

@@ -4,7 +4,16 @@ import { z } from "zod"
 import { handleRouteError, jsonOk, jsonError, parseJsonBody } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
 import { store } from "../server/repositories/store.js"
-import { logger } from "../lib/logger.js"
+
+/**
+ * Campaign routes — group saved rows into named campaigns for bulk operations.
+ *
+ * GET    /              — List campaigns for current user
+ * POST   /              — Create a new campaign
+ * DELETE /:campaignId   — Delete a campaign
+ * POST   /:campaignId/rows         — Add a saved row to a campaign
+ * DELETE /:campaignId/rows/:rowId  — Remove a row from a campaign
+ */
 
 const router = Router()
 

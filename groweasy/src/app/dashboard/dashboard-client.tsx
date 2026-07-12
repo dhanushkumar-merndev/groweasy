@@ -1,9 +1,7 @@
 "use client"
 
-import * as React from "react"
 import Link from "next/link"
 import { ArrowRightIcon, InboxIcon } from "lucide-react"
-
 import { ChartLineInteractive } from "@/components/chart-line-interactive"
 import { DashboardPageSkeleton } from "@/components/skeletons/dashboard-skeleton"
 import { StatusCountCards } from "@/components/status-count-cards"
