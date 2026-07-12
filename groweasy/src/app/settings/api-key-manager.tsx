@@ -42,6 +42,8 @@ const DELETE_CONFIRMATION_TEXT = "DELETE MY API"
 
 type ApiKeyResponse = {
   hasKey?: boolean
+  isActive?: boolean
+  keyReadable?: boolean
   maskedKey?: string
   provider?: string
   model?: string
@@ -67,6 +69,8 @@ export function ApiKeyManager() {
   const [key, setKey] = useState("")
   const [savedInfo, setSavedInfo] = useState<{ provider: string; model: string } | null>(null)
   const [useUserApiKey, setUseUserApiKey] = useState(false)
+  const [isActive, setIsActive] = useState(false)
+  const [keyReadable, setKeyReadable] = useState(true)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [savingMode, setSavingMode] = useState(false)
@@ -85,6 +89,8 @@ export function ApiKeyManager() {
     const data: ApiKeyResponse = await response.json()
 
     setUseUserApiKey(Boolean(data.useUserApiKey))
+    setIsActive(Boolean(data.isActive))
+    setKeyReadable(data.keyReadable !== false)
     if (data.hasKey) {
       const p = normalizeProvider(data.provider)
       const m = getSupportedModel(p, data.model)
@@ -93,6 +99,8 @@ export function ApiKeyManager() {
       setModel(m)
     } else {
       setSavedInfo(null)
+      setIsActive(false)
+      setKeyReadable(true)
     }
   }
 
@@ -219,8 +227,8 @@ export function ApiKeyManager() {
           <p className="mt-1 text-xs text-muted-foreground">Controls row processing, analytics, and upload limits.</p>
         </div>
         {!loading ? (
-          <Badge className="shrink-0" variant={useUserApiKey && hasExisting ? "default" : "secondary"}>
-            {useUserApiKey && hasExisting ? "Custom key active" : "Default keys"}
+          <Badge className="shrink-0" variant={isActive ? "default" : "secondary"}>
+            {isActive ? "Custom key active" : hasExisting && useUserApiKey ? "Key needs update" : "Default keys"}
           </Badge>
         ) : null}
       </CardHeader>
@@ -327,10 +335,17 @@ export function ApiKeyManager() {
                 </div>
               </div>
             </fieldset>
+            {hasExisting && useUserApiKey && !keyReadable ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                Your saved key cannot be decrypted on this backend. Paste and save the API key again.
+              </div>
+            ) : null}
             <div className="rounded-md border bg-muted/15 px-3 py-2 text-sm text-muted-foreground">
               {useUserApiKey
                 ? hasExisting
-                  ? "Custom key is active for AI processing and analytics."
+                  ? isActive
+                    ? "Custom key is active for AI processing and analytics."
+                    : "A key is saved, but it is not active for processing yet."
                   : "Add and save a key before the next AI run or analytics generate."
                 : "Default backend keys are active: Cloudflare for row processing, Groq for analytics."}
             </div>

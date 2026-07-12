@@ -121,9 +121,18 @@ router.get("/apikey", async (req, res) => {
       return jsonOk(res, { hasKey: false, isActive: false, useUserApiKey })
     }
     const hasKey = Boolean(settings?.encrypted_api_key)
+    let keyReadable = false
+
+    try {
+      keyReadable = Boolean(settings.encrypted_api_key && decrypt(settings.encrypted_api_key))
+    } catch (error) {
+      logger.warn({ userId: user.id, error }, "Saved user API key cannot be decrypted")
+    }
+
     return jsonOk(res, {
       hasKey,
-      isActive: Boolean(hasKey && useUserApiKey),
+      isActive: Boolean(hasKey && useUserApiKey && keyReadable),
+      keyReadable,
       maskedKey: "********",
       provider: normalizeSupportedProvider(settings?.provider ?? "cloudflare"),
       model: settings?.model ?? "@cf/google/gemma-4-26b-a4b-it",
