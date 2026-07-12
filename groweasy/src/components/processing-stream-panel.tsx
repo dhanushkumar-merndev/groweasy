@@ -15,7 +15,7 @@ import {
 import Lottie from "lottie-react"
 
 import { Button } from "@/components/ui/button"
-import { api, API_BASE } from "@/lib/api-client"
+import { api } from "@/lib/api-client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { clearLocalValidationPreview, ensureLocalValidationPreview, normalizeLocalValidationRows } from "@/lib/local-validation-preview"
@@ -220,7 +220,7 @@ export function ProcessingStreamPanel({ importId }: { importId: string }) {
       setStatus("Processing rows with AI")
       pushActivity("connect", "Opening live stream", "Connected to backend events for this import.")
 
-      const source = new EventSource(`${API_BASE}/api/imports/${importId}/stream?force=1`, {
+      const source = new EventSource(`/api/imports/${importId}/stream?force=1`, {
         withCredentials: true,
       })
       sourceRef.current = source
