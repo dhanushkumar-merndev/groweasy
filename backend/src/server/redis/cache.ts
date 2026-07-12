@@ -12,6 +12,7 @@ import { logger } from "../../lib/logger.js"
  */
 
 const TTL_SECONDS = 86_400
+const LIST_CACHE_TTL_SECONDS = 120
 const VERSION = "v1"
 export const AUTH_USER_CACHE_TTL_SECONDS = 1_800
 
@@ -90,6 +91,33 @@ export async function deleteCache(key: string) {
   }
 
   memoryCache.delete(key)
+}
+
+export function userListCacheKeys(userId: string) {
+  return {
+    imports: `user:${userId}:imports:list:v1`,
+    templates: `user:${userId}:templates:list:v1`,
+    historyExport: `user:${userId}:history:export:list:v1`,
+    campaigns: `user:${userId}:campaigns:list:v1`,
+  }
+}
+
+export async function getOrSetUserListCache<T>(
+  key: string,
+  load: () => Promise<T>,
+  ttlSeconds = LIST_CACHE_TTL_SECONDS,
+) {
+  const cached = await getCache<T>(key)
+  if (cached) return cached
+
+  const data = await load()
+  await setCache(key, data, ttlSeconds)
+  return data
+}
+
+export async function invalidateUserListCaches(userId: string) {
+  const keys = userListCacheKeys(userId)
+  await Promise.all(Object.values(keys).map((key) => deleteCache(key)))
 }
 
 export async function invalidateImportCache(importId: string) {

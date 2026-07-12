@@ -3,6 +3,7 @@ import { Router } from "express"
 import { appendRowSchema, savedRowPatchSchema, tableRowsQuerySchema } from "../lib/schemas.js"
 import { handleRouteError, jsonError, jsonOk, parseJsonBody } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
+import { invalidateUserListCaches } from "../server/redis/cache.js"
 import { store } from "../server/repositories/store.js"
 import { logger } from "../lib/logger.js"
 
@@ -80,6 +81,7 @@ router.post("/:importId/rows", async (req, res) => {
     logger.info({ userId: user.id, importId }, "Appending row")
     const row = store.appendSavedRow(user.id, importId, body)
     await store.addHistory(user.id, importId, "rows_added", { row_id: row.id })
+    await invalidateUserListCaches(user.id)
 
     return jsonOk(res, { row }, 201)
   } catch (error) {
@@ -105,6 +107,7 @@ router.patch("/:importId/rows/:rowId", async (req, res) => {
     }
 
     logger.info({ userId: user.id, rowId }, "Updated saved row")
+    await invalidateUserListCaches(user.id)
     return jsonOk(res, { row })
   } catch (error) {
     return handleRouteError(res, error)
@@ -129,6 +132,7 @@ router.delete("/:importId/rows/:rowId", async (req, res) => {
 
     await store.addHistory(user.id, importId, "rows_deleted", { row_id: rowId })
     logger.info({ userId: user.id, rowId }, "Deleted saved row")
+    await invalidateUserListCaches(user.id)
 
     return jsonOk(res, { deleted: true })
   } catch (error) {

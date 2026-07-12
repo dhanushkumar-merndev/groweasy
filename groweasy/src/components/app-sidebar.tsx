@@ -27,6 +27,7 @@ import {
   UploadCloudIcon,
 } from "lucide-react"
 import type { CurrentUser } from "@/lib/auth-types"
+import { prefetchPageData, prefetchWorkspaceData } from "@/lib/page-data"
 import { AccountSwitcher } from "@/components/account-switcher"
 
 const primaryNav = [
@@ -49,6 +50,20 @@ export function AppSidebar({
   user: CurrentUser
 }) {
   const pathname = usePathname()
+
+  React.useEffect(() => {
+    const run = () => {
+      void prefetchWorkspaceData()
+    }
+
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(run, { timeout: 2500 })
+      return () => window.cancelIdleCallback(id)
+    }
+
+    const id = setTimeout(run, 1200)
+    return () => clearTimeout(id)
+  }, [])
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -80,7 +95,13 @@ export function AppSidebar({
                       tooltip={item.title}
                       isActive={active}
                       className={!active ? "hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground" : undefined}
-                      render={<Link href={item.url} />}
+                      render={
+                        <Link
+                          href={item.url}
+                          onFocus={() => void prefetchPageData(item.url)}
+                          onMouseEnter={() => void prefetchPageData(item.url)}
+                        />
+                      }
                     >
                       <Icon />
                       <span>{item.title}</span>

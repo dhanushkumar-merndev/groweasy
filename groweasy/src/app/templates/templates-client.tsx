@@ -7,20 +7,12 @@ import { LockIcon, PlusIcon } from "lucide-react"
 import { TemplateCardsSkeleton } from "@/components/skeletons/page-skeletons"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardTitle } from "@/components/ui/card"
-import { api } from "@/lib/api-client"
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache"
+import { loadTemplates } from "@/lib/page-data"
 import { useCachedResource } from "@/hooks/use-cached-resource"
 import type { Template } from "@/lib/types"
 
 const CACHE_KEY = CLIENT_CACHE_KEYS.templatesList
-
-async function loadTemplates() {
-  const response = await api("/templates")
-  if (!response.ok) throw new Error("Unable to load templates.")
-
-  const { templates } = (await response.json()) as { templates: Template[] }
-  return templates
-}
 
 export function TemplatesClient() {
   const { data: templates, error, loading } = useCachedResource({

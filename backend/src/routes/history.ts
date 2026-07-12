@@ -2,6 +2,7 @@ import { Router } from "express"
 
 import { handleRouteError, jsonOk } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
+import { getOrSetUserListCache, userListCacheKeys } from "../server/redis/cache.js"
 import { store } from "../server/repositories/store.js"
 import { logger } from "../lib/logger.js"
 
@@ -19,10 +20,19 @@ router.get("/", async (req, res) => {
     const user = await requireCurrentUser(req)
     const type = req.query.type as string | undefined
 
-    let history = await store.listHistory(user.id)
+    let history = type === "export"
+      ? await getOrSetUserListCache(
+          userListCacheKeys(user.id).historyExport,
+          async () => {
+            const entries = await store.listHistory(user.id)
+            return entries.filter((entry) => EXPORT_ACTIONS.has(entry.action))
+          },
+        )
+      : await store.listHistory(user.id)
 
     if (type === "export") {
-      history = history.filter((entry) => EXPORT_ACTIONS.has(entry.action))
+      logger.info({ userId: user.id, type, count: history.length }, "List history")
+      return jsonOk(res, { history })
     }
 
     logger.info({ userId: user.id, type, count: history.length }, "List history")

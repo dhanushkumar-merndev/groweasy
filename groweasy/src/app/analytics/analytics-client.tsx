@@ -7,8 +7,8 @@ import { TemplateCardsSkeleton } from "@/components/skeletons/page-skeletons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardTitle } from "@/components/ui/card"
-import { api } from "@/lib/api-client"
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache"
+import { loadAnalyticsData, type AnalyticsData } from "@/lib/page-data"
 import { useCachedResource } from "@/hooks/use-cached-resource"
 import type { ImportJob, Template } from "@/lib/types"
 
@@ -19,11 +19,6 @@ const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
 })
 
-type AnalyticsCache = {
-  imports: ImportJob[]
-  templates: Template[]
-}
-
 type TemplateSummary = {
   template: Template
   imports: number
@@ -32,7 +27,7 @@ type TemplateSummary = {
   lastUpdated: string | null
 }
 
-function summarizeTemplates({ imports, templates }: AnalyticsCache) {
+function summarizeTemplates({ imports, templates }: AnalyticsData) {
   const uniqueTemplates = [...new Map(templates.map((template) => [template.id, template])).values()]
 
   // Group once so each card can be derived without repeatedly scanning the full import list.
@@ -82,24 +77,6 @@ function summarizeTemplates({ imports, templates }: AnalyticsCache) {
       if (a.lastUpdated) return -1
       return a.template.name.localeCompare(b.template.name)
     })
-}
-
-async function loadAnalyticsData() {
-  const [importsResponse, templatesResponse] = await Promise.all([
-    api("/imports"),
-    api("/templates"),
-  ])
-
-  if (!importsResponse.ok || !templatesResponse.ok) {
-    throw new Error("Unable to load analytics.")
-  }
-
-  const [{ imports }, { templates }] = await Promise.all([
-    importsResponse.json() as Promise<{ imports: ImportJob[] }>,
-    templatesResponse.json() as Promise<{ templates: Template[] }>,
-  ])
-
-  return { imports, templates }
 }
 
 export function AnalyticsClient() {

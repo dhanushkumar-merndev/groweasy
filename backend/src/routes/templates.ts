@@ -3,6 +3,7 @@ import { Router } from "express"
 import { templateInputSchema } from "../lib/schemas.js"
 import { handleRouteError, jsonError, jsonOk, parseJsonBody } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
+import { getOrSetUserListCache, invalidateUserListCaches, userListCacheKeys } from "../server/redis/cache.js"
 import { store } from "../server/repositories/store.js"
 import { logger } from "../lib/logger.js"
 import { systemUserId } from "../lib/default-template.js"
@@ -13,7 +14,11 @@ router.get("/", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     logger.info({ userId: user.id }, "List templates")
-    return jsonOk(res, { templates: await store.listTemplatesForUser(user.id) })
+    const templates = await getOrSetUserListCache(
+      userListCacheKeys(user.id).templates,
+      () => store.listTemplatesForUser(user.id),
+    )
+    return jsonOk(res, { templates })
   } catch (error) {
     return handleRouteError(res, error)
   }
@@ -35,6 +40,7 @@ router.post("/", async (req, res) => {
       id: crypto.randomUUID(),
       ...body,
     })
+    await invalidateUserListCaches(user.id)
 
     logger.info({ userId: user.id, templateId: template.id }, "Template created")
     return jsonOk(res, { template }, 201)
@@ -87,6 +93,7 @@ router.patch("/:id", async (req, res) => {
       created_at: existing.created_at,
       ...body,
     })
+    await invalidateUserListCaches(user.id)
 
     logger.info({ userId: user.id, templateId: id }, "Template updated")
     return jsonOk(res, { template })
@@ -110,6 +117,7 @@ router.delete("/:id", async (req, res) => {
     }
 
     const deleted = await store.deleteTemplateForUser(user.id, id)
+    await invalidateUserListCaches(user.id)
     return jsonOk(res, { deleted })
   } catch (error) {
     return handleRouteError(res, error)

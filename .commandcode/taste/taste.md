@@ -6,3 +6,6 @@
 
 # logging
 - Never log raw error objects or Zod issues directly — extract only safe fields (message, path) to avoid leaking stack traces, passwords, or API keys to logs. Confidence: 0.70
+
+# architecture
+- All application data must be persisted in Supabase, not stored in server memory — eliminate the in-memory StoreState. Confidence: 0.65

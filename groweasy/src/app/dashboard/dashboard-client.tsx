@@ -15,35 +15,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { api } from "@/lib/api-client"
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache"
+import { loadDashboardData } from "@/lib/page-data"
 import { useCachedResource } from "@/hooks/use-cached-resource"
 import type { ImportJob, Template } from "@/lib/types"
 
 const CACHE_KEY = CLIENT_CACHE_KEYS.dashboard
-
-type DashboardCache = {
-  imports: ImportJob[]
-  templates: Template[]
-}
-
-async function loadDashboardData(): Promise<DashboardCache> {
-  const [importsResponse, templatesResponse] = await Promise.all([
-    api("/imports"),
-    api("/templates"),
-  ])
-
-  if (!importsResponse.ok || !templatesResponse.ok) {
-    throw new Error("Unable to load dashboard.")
-  }
-
-  const [{ imports }, { templates }] = await Promise.all([
-    importsResponse.json() as Promise<{ imports: ImportJob[] }>,
-    templatesResponse.json() as Promise<{ templates: Template[] }>,
-  ])
-
-  return { imports, templates }
-}
 
 export function DashboardClient() {
   const { data, error, loading } = useCachedResource({

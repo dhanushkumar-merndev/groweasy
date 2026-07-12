@@ -3,7 +3,7 @@ import multer from "multer"
 
 import { uploadOptionsSchema, processImportSchema, saveImportSchema, exportExcelSchema, googleSheetExportSchema, validateImportSchema } from "../lib/schemas.js"
 import type { ImportSheet, RawImportRow, ValidationResult, ValidationWarning } from "../lib/types.js"
-import { cacheKeys, getCache, invalidateProcessedImportCache, setCache } from "../server/redis/cache.js"
+import { cacheKeys, getCache, getOrSetUserListCache, invalidateProcessedImportCache, invalidateUserListCaches, setCache, userListCacheKeys } from "../server/redis/cache.js"
 import { handleRouteError, jsonError, jsonOk, parseJsonBody } from "../server/api.js"
 import { parseWorkbook } from "../server/imports/parser.js"
 import { requireCurrentUser } from "../middleware/auth.js"
@@ -42,7 +42,11 @@ router.get("/", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     logger.info({ userId: user.id }, "List imports")
-    return jsonOk(res, { imports: await store.listImportsForUser(user.id) })
+    const imports = await getOrSetUserListCache(
+      userListCacheKeys(user.id).imports,
+      () => store.listImportsForUser(user.id),
+    )
+    return jsonOk(res, { imports })
   } catch (error) {
     return handleRouteError(res, error)
   }
@@ -98,6 +102,7 @@ router.post("/", upload.single("file"), async (req, res) => {
 
     await setCache(cacheKeys(importId).raw, validation.rows)
     await setCache(cacheKeys(importId).validation, validation)
+    await invalidateUserListCaches(user.id)
 
     logger.info({ userId: user.id, importId, totalRows: validation.rows.length }, "File upload completed")
     return jsonOk(res, {
@@ -184,6 +189,7 @@ router.post("/batch", async (req, res) => {
         generate_description: generateDescription,
         correct_spelling: correctSpelling,
       })
+      await invalidateUserListCaches(user.id)
       return jsonOk(res, {
         import: existingJob,
         validation: {
@@ -228,6 +234,7 @@ router.post("/batch", async (req, res) => {
       correct_spelling: correctSpelling,
     }
     await setCache(cacheKeys(importId).validation, validation)
+    await invalidateUserListCaches(user.id)
 
     logger.info({ userId: user.id, importId, totalRows: mappedRows.length }, "Batch import completed")
     return jsonOk(res, {
@@ -722,6 +729,7 @@ router.post("/:id/save", async (req, res) => {
       final_saved_count: savedRows.length,
       fixed_missing_count: selectedRows.filter((row) => row.status === "good" && row.missing_fields.length > 0).length,
     })
+    await invalidateUserListCaches(user.id)
 
     logger.info({ importId: id, savedCount: savedRows.length }, "Rows saved")
     return jsonOk(res, { saved_rows: savedRows.length })

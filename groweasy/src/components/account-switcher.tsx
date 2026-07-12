@@ -146,6 +146,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
   const userAvatarSrc = getAvatarSrc(user.image)
   const sessionLimitReached = rows.length >= MAX_DEVICE_SESSIONS
   const showSkeleton = loading && sessions.length === 0
+  const showLogoutAllAction = rows.length > 1
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen) {
@@ -447,7 +448,7 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
                 })}
           </div>
 
-          {confirmLogoutAll && (
+          {showLogoutAllAction && confirmLogoutAll && (
             <div className="grid gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
               <div className="grid gap-1">
                 <p className="text-sm font-medium text-foreground">Log out all accounts?</p>
@@ -478,16 +479,18 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
           )}
 
           <div className="grid gap-2">
-            <Button
-              type="button"
-              variant="destructive"
-              className="justify-center"
-              disabled={rows.length <= 1 || loggingOutAll}
-              onClick={() => setConfirmLogoutAll(true)}
-            >
-              <LogOutIcon className="size-4" />
-              Log out all accounts
-            </Button>
+            {showLogoutAllAction ? (
+              <Button
+                type="button"
+                variant="destructive"
+                className="justify-center"
+                disabled={loggingOutAll}
+                onClick={() => setConfirmLogoutAll(true)}
+              >
+                <LogOutIcon className="size-4" />
+                Log out all accounts
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"

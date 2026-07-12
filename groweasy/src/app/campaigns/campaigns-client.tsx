@@ -15,19 +15,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { api } from "@/lib/api-client"
 import { CLIENT_CACHE_KEYS } from "@/lib/client-cache"
+import { loadCampaignsData, type CampaignsData } from "@/lib/page-data"
 import { useCachedResource } from "@/hooks/use-cached-resource"
-import type { ImportJob, Template } from "@/lib/types"
 
 const CACHE_KEY = CLIENT_CACHE_KEYS.campaignsList
 
-type CampaignsCache = {
-  imports: ImportJob[]
-  templates: Template[]
-}
-
-function summarizeTemplates({ imports, templates }: CampaignsCache) {
+function summarizeTemplates({ imports, templates }: CampaignsData) {
   const uniqueTemplates = [...new Map(templates.map((template) => [template.id, template])).values()]
 
   return uniqueTemplates.map((template) => {
@@ -47,24 +41,6 @@ function summarizeTemplates({ imports, templates }: CampaignsCache) {
       lastUpdated,
     }
   })
-}
-
-async function loadCampaignsData() {
-  const [importsResponse, templatesResponse] = await Promise.all([
-    api("/imports"),
-    api("/templates"),
-  ])
-
-  if (!importsResponse.ok || !templatesResponse.ok) {
-    throw new Error("Unable to load campaigns.")
-  }
-
-  const [{ imports }, { templates }] = await Promise.all([
-    importsResponse.json() as Promise<{ imports: ImportJob[] }>,
-    templatesResponse.json() as Promise<{ templates: Template[] }>,
-  ])
-
-  return { imports, templates }
 }
 
 export function CampaignsClient() {
