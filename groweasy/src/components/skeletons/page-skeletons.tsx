@@ -72,7 +72,7 @@ export function TemplateCardsSkeleton({ includeCreate = false }: { includeCreate
 export function SettingsPanelSkeleton({ rows = 4 }: { rows?: number }) {
   return (
     <Card className="overflow-hidden py-0">
-      <CardHeader className="border-b">
+      <CardHeader className="border-b px-5 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="grid gap-2">
             <Skeleton className="h-5 w-32" />
