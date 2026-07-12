@@ -5,7 +5,7 @@ import { handleRouteError, jsonError, jsonOk, parseJsonBody } from "../server/ap
 import { requireCurrentUser } from "../middleware/auth.js"
 import { store } from "../server/repositories/store.js"
 import { logger } from "../lib/logger.js"
-import { demoUserId } from "../lib/data/sample-data.js"
+import { systemUserId } from "../lib/default-template.js"
 
 const router = Router()
 
@@ -69,7 +69,7 @@ router.patch("/:id", async (req, res) => {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)
     }
 
-    if (existing.user_id === demoUserId) {
+    if (existing.user_id === systemUserId) {
       return jsonError(res, "TEMPLATE_LOCKED", "The default template cannot be edited.", 403)
     }
 
@@ -105,7 +105,7 @@ router.delete("/:id", async (req, res) => {
       return jsonError(res, "TEMPLATE_NOT_FOUND", "Template not found.", 404)
     }
 
-    if (existing.user_id === demoUserId) {
+    if (existing.user_id === systemUserId) {
       return jsonError(res, "TEMPLATE_LOCKED", "The default template cannot be deleted.", 403)
     }
 

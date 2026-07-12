@@ -3,7 +3,7 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { decodeJwt } from "jose"
 
 import { auth, isAuthConfigured } from "../server/auth/auth.js"
-import { demoUserId } from "../lib/data/sample-data.js"
+import { systemUserId } from "../lib/default-template.js"
 import { store } from "../server/repositories/store.js"
 import { handleRouteError, jsonOk } from "../server/api.js"
 import { logger } from "../lib/logger.js"
@@ -28,7 +28,7 @@ router.get("/me", async (req, res) => {
     if (!isAuthConfigured()) {
       return jsonOk(res, {
         user: {
-          id: demoUserId,
+          id: systemUserId,
           name: "Demo User",
           email: "demo@groweasy.local",
           image: null,

@@ -6,6 +6,7 @@ import { SaveIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api-client"
+import { clearGrowEasyDataCache } from "@/lib/client-cache"
 import type { CleanedRow } from "@/lib/types"
 
 export function SaveReviewedRowsButton({
@@ -34,6 +35,7 @@ export function SaveReviewedRowsButton({
         }
 
         window.sessionStorage.removeItem(reviewDraftKey(importId))
+        clearGrowEasyDataCache()
         toast.success(`Saved ${data.saved_rows ?? 0} good or fixed rows.`)
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Unable to save rows.")

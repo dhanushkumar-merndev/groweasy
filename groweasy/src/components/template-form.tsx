@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { clearGrowEasyTemplateCache } from "@/lib/client-cache"
 import type { FormattingRule, Template, TemplateColumn } from "@/lib/types"
 
 let nextUid = 1
@@ -97,6 +98,7 @@ export function TemplateForm({ template }: { template?: Template }) {
         }
 
         toast.success("Template saved.")
+        clearGrowEasyTemplateCache()
         router.push("/templates")
         router.refresh()
       } catch (error) {

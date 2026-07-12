@@ -10,11 +10,12 @@ type AppShellProps = {
   title: string
   description?: string
   actions?: React.ReactNode
+  freshAuth?: boolean
   children: React.ReactNode
 }
 
-export async function AppShell({ title, description, actions, children }: AppShellProps) {
-  const user = await getCurrentUser()
+export async function AppShell({ title, description, actions, freshAuth = false, children }: AppShellProps) {
+  const user = await getCurrentUser({ cache: !freshAuth })
 
   if (!user) {
     redirect("/login")

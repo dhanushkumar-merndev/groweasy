@@ -9,6 +9,7 @@ import { EditableCell } from "@/components/editable-cell"
 import { api } from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { clearGrowEasyDataCache } from "@/lib/client-cache"
 import type { SavedRow, Template } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -156,6 +157,7 @@ export function VirtualTable({
 
     if (response.ok) {
       setDirtyRows((current) => ({ ...current, [row.id]: false }))
+      clearGrowEasyDataCache()
       toast.success("Row saved.")
     } else {
       toast.error("Unable to save row.")

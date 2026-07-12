@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url"
 
 import {
   defaultTemplateId,
-  demoUserId,
-  sampleTemplates,
-} from "../../lib/data/sample-data.js"
+  systemUserId,
+  defaultTemplate,
+} from "../../lib/default-template.js"
 import type {
   CleanedRow,
   HistoryAction,
@@ -50,7 +50,7 @@ const localStorePersistEnabled = process.env.NODE_ENV !== "production" && proces
 
 function defaultState(): StoreState {
   return {
-    templates: [...sampleTemplates],
+    templates: [...[defaultTemplate]],
     imports: [],
     sheets: [],
     cleanedRows: [],
@@ -75,7 +75,7 @@ function loadState(): StoreState {
   try {
     const parsed = JSON.parse(readFileSync(storeFilePath, "utf8")) as Partial<StoreState>
     return {
-      templates: parsed.templates?.length ? parsed.templates : [...sampleTemplates],
+      templates: parsed.templates?.length ? parsed.templates : [defaultTemplate],
       imports: parsed.imports ?? [],
       sheets: parsed.sheets ?? [],
       cleanedRows: parsed.cleanedRows ?? [],
@@ -117,7 +117,7 @@ async function syncSavedRowsToSupabase(userId: string, importId: string, savedRo
     return
   }
 
-  const job = state.imports.find((item) => item.id === importId && (item.user_id === userId || item.user_id === demoUserId))
+  const job = state.imports.find((item) => item.id === importId && (item.user_id === userId || item.user_id === systemUserId))
   const templateId = job?.template_id ?? defaultTemplateId
   const now = new Date().toISOString()
 
@@ -254,7 +254,7 @@ async function ensureTemplateInSupabase(userId: string, templateId: string) {
   if (!supabase) return
 
   const template = state.templates.find((item) => item.id === templateId)
-    ?? sampleTemplates.find((item) => item.id === templateId)
+    ?? (defaultTemplate.id === templateId ? defaultTemplate : undefined)
 
   if (!template) {
     logger.warn({ templateId }, "Cannot sync import because template is missing locally")
@@ -502,8 +502,8 @@ function isRecord(value: unknown) {
 
 const state: StoreState = loadState()
 
-if (!state.templates.some((template) => template.user_id === demoUserId)) {
-  state.templates.push(...sampleTemplates)
+if (!state.templates.some((template) => template.user_id === systemUserId)) {
+  state.templates.push(...[defaultTemplate])
   persistState()
 }
 
@@ -524,7 +524,7 @@ ensureSchema()
 export const store = {
   listTemplates(userId: string) {
     const templates = state.templates
-      .filter((template) => template.user_id === userId || template.user_id === demoUserId)
+      .filter((template) => template.user_id === userId || template.user_id === systemUserId)
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
     logger.debug({ userId, count: templates.length }, "List templates")
     return templates
@@ -532,7 +532,7 @@ export const store = {
 
   async listTemplatesForUser(userId: string) {
     const dbTemplates = await listTemplatesFromSupabase(userId)
-    const demoTemplates = state.templates.filter((t) => t.user_id === demoUserId)
+    const demoTemplates = state.templates.filter((t) => t.user_id === systemUserId)
 
     if (dbTemplates.length > 0) {
       cacheUserTemplates(userId, dbTemplates)
@@ -676,7 +676,7 @@ export const store = {
   },
 
   listImports(userId: string) {
-    const jobs = state.imports.filter((job) => job.user_id === userId || job.user_id === demoUserId)
+    const jobs = state.imports.filter((job) => job.user_id === userId || job.user_id === systemUserId)
     logger.debug({ userId, count: jobs.length }, "List imports")
     return jobs
   },
@@ -813,7 +813,7 @@ export const store = {
       return dbRows
     }
 
-    const rows = state.savedRows.filter((row) => row.import_id === importId && (row.user_id === userId || row.user_id === demoUserId))
+    const rows = state.savedRows.filter((row) => row.import_id === importId && (row.user_id === userId || row.user_id === systemUserId))
 
     if (rows.length > 0) {
       logger.debug({ userId, importId, count: rows.length, source: "local-fallback" }, "List saved rows")
@@ -834,7 +834,7 @@ export const store = {
       return dbRows
     }
 
-    const rows = state.savedRows.filter((row) => row.user_id === userId || row.user_id === demoUserId)
+    const rows = state.savedRows.filter((row) => row.user_id === userId || row.user_id === systemUserId)
 
     if (rows.length > 0) {
       logger.debug({ userId, count: rows.length, source: "local-fallback" }, "List all saved rows")
@@ -970,7 +970,7 @@ export const store = {
       logger.debug({ userId, count: dbEntries.length }, "List history from DB")
       return dbEntries
     }
-    const entries = state.history.filter((entry) => entry.user_id === userId || entry.user_id === demoUserId)
+    const entries = state.history.filter((entry) => entry.user_id === userId || entry.user_id === systemUserId)
     logger.debug({ userId, count: entries.length }, "List history from local store")
     return entries
   },
@@ -1040,7 +1040,7 @@ export const store = {
   },
 
   listCampaigns(userId: string) {
-    return state.campaigns.filter((c) => c.user_id === userId || c.user_id === demoUserId)
+    return state.campaigns.filter((c) => c.user_id === userId || c.user_id === systemUserId)
   },
 
   createCampaign(userId: string, name: string) {
@@ -1058,13 +1058,13 @@ export const store = {
   },
 
   deleteCampaign(userId: string, campaignId: string) {
-    state.campaigns = state.campaigns.filter((c) => !(c.id === campaignId && (c.user_id === userId || c.user_id === demoUserId)))
+    state.campaigns = state.campaigns.filter((c) => !(c.id === campaignId && (c.user_id === userId || c.user_id === systemUserId)))
     persistState()
     logger.info({ userId, campaignId }, "Campaign deleted")
   },
 
   addRowToCampaign(userId: string, campaignId: string, rowId: string) {
-    const campaign = state.campaigns.find((c) => c.id === campaignId && (c.user_id === userId || c.user_id === demoUserId))
+    const campaign = state.campaigns.find((c) => c.id === campaignId && (c.user_id === userId || c.user_id === systemUserId))
     if (!campaign) return false
     if (!campaign.rowIds.includes(rowId)) {
       campaign.rowIds.push(rowId)
@@ -1074,7 +1074,7 @@ export const store = {
   },
 
   removeRowFromCampaign(userId: string, campaignId: string, rowId: string) {
-    const campaign = state.campaigns.find((c) => c.id === campaignId && (c.user_id === userId || c.user_id === demoUserId))
+    const campaign = state.campaigns.find((c) => c.id === campaignId && (c.user_id === userId || c.user_id === systemUserId))
     if (!campaign) return false
     campaign.rowIds = campaign.rowIds.filter((id) => id !== rowId)
     persistState()

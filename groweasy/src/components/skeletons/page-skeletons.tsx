@@ -71,8 +71,12 @@ export function TemplateCardsSkeleton({ includeCreate = false }: { includeCreate
 
 export function AnalyticsDetailSkeleton() {
   return (
-    <>
+    <div className="grid gap-4">
       <Skeleton className="h-8 w-28" />
+      <div className="grid gap-1">
+        <Skeleton className="h-7 w-56" />
+        <Skeleton className="h-4 w-80 max-w-full" />
+      </div>
       <MetricCardsSkeleton />
       <div className="grid gap-4">
         <div className="flex items-center gap-2">
@@ -86,7 +90,7 @@ export function AnalyticsDetailSkeleton() {
           <Skeleton className="h-[200px] rounded-lg" />
         </div>
       </div>
-    </>
+    </div>
   )
 }
 

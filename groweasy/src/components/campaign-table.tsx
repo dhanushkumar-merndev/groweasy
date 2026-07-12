@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api-client"
+import { clearGrowEasyDataCache } from "@/lib/client-cache"
 import { cn } from "@/lib/utils"
 import type { SavedRow } from "@/lib/types"
 
@@ -140,6 +141,7 @@ export function CampaignTable({
       )
       setEditingRow(null)
       setEditValues({})
+      clearGrowEasyDataCache()
       toast.success("Row updated")
     } else {
       toast.error("Failed to save row")

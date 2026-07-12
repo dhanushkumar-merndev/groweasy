@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { IdbCleanup } from "@/components/idb-cleanup";
+import { UploadReloadCleanup } from "@/components/upload-reload-cleanup";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -36,37 +36,8 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full bg-background text-foreground" suppressHydrationWarning>
-        <Script
-          id="upload-reload-cleanup"
-          strategy="beforeInteractive"
-          dangerouslySetInnerHTML={{
-            __html: `
-              (() => {
-                try {
-                  const path = window.location.pathname;
-                  const match = path.match(/^\\/upload\\/([^/]+)/);
-                  if (!match) return;
-
-                  const nav = performance.getEntriesByType("navigation")[0];
-                  if (nav?.type !== "reload") return;
-
-                  const draftKey = "groweasy-upload-draft";
-                  if (!sessionStorage.getItem(draftKey)) return;
-
-                  const importId = match[1];
-                  sessionStorage.removeItem(draftKey);
-                  sessionStorage.removeItem("groweasy-upload-reset-on-reload");
-                  sessionStorage.removeItem("groweasy-validation-preview:" + importId);
-                  sessionStorage.removeItem("groweasy-validate-state:" + importId);
-                  window.location.replace("/upload");
-                } catch {
-                  // Ignore storage access errors and let the app render normally.
-                }
-              })();
-            `,
-          }}
-        />
         <TooltipProvider>
+          <UploadReloadCleanup />
           <IdbCleanup />
           {children}
           <Toaster richColors closeButton />

@@ -1,13 +1,15 @@
+import { Suspense } from "react"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ArrowLeftIcon, InboxIcon } from "lucide-react"
 
 import { AppShell } from "@/components/app-shell"
+import { TableWorkspaceSkeleton } from "@/components/skeletons/page-skeletons"
 import { VirtualTable } from "@/components/virtual-table"
 import { StatusCountCards } from "@/components/status-count-cards"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import { serverFetch } from "@/lib/server-api"
 import type { ImportJob, SavedRow, Template } from "@/lib/types"
 
 export default async function CampaignDetailPage({
@@ -15,9 +17,18 @@ export default async function CampaignDetailPage({
 }: {
   params: Promise<{ templateId: string }>
 }) {
-  await requireCurrentUser()
-
   const { templateId } = await params
+
+  return (
+    <AppShell title="Campaign" description="Editable saved rows table.">
+      <Suspense fallback={<TableWorkspaceSkeleton />}>
+        <CampaignDetailContent templateId={templateId} />
+      </Suspense>
+    </AppShell>
+  )
+}
+
+async function CampaignDetailContent({ templateId }: { templateId: string }) {
   const [{ template }, { imports }] = await Promise.all([
     serverFetch<{ template: Template | null }>(`/templates/${templateId}`),
     serverFetch<{ imports: ImportJob[] }>("/imports"),
@@ -49,7 +60,12 @@ export default async function CampaignDetailPage({
   }
 
   return (
-    <AppShell title={template.name} description="Editable saved rows table.">
+    <>
+      <div className="grid gap-1">
+        <h2 className="text-lg font-semibold tracking-normal">{template.name}</h2>
+        <p className="text-sm text-muted-foreground">Editable saved rows table.</p>
+      </div>
+
       <div className="flex items-center justify-between gap-3">
         <Button
           variant="ghost"
@@ -77,6 +93,6 @@ export default async function CampaignDetailPage({
       ) : (
         <VirtualTable importId={templateImports[0].id} rows={rows} template={template} />
       )}
-    </AppShell>
+    </>
   )
 }

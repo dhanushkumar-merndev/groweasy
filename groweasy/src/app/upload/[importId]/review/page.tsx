@@ -2,12 +2,11 @@ import { redirect } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import { ImportStepLayout } from "@/components/import-step-layout"
 import { ReviewNav, ReviewWorkspace } from "@/components/review-workspace"
-import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import { serverFetch } from "@/lib/server-api"
 import type { CleanedRow, ImportJob, Template, ValidationResult } from "@/lib/types"
 
 export default async function ReviewPage({ params }: { params: Promise<{ importId: string }> }) {
   const { importId } = await params
-  await requireCurrentUser()
 
   const importData = await serverFetch<{ import: ImportJob; template: Template | null; validation?: ValidationResult; cleaned_rows: CleanedRow[] }>(
     `/imports/${importId}`

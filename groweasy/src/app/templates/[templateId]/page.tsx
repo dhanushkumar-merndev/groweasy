@@ -1,14 +1,16 @@
+import { Suspense } from "react"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ArrowLeftIcon, InboxIcon } from "lucide-react"
 
 import { AppShell } from "@/components/app-shell"
+import { TableWorkspaceSkeleton } from "@/components/skeletons/page-skeletons"
 import { StatusCountCards } from "@/components/status-count-cards"
 import { TemplateTableActions } from "@/components/template-table-actions"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { VirtualTable } from "@/components/virtual-table"
-import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import { serverFetch } from "@/lib/server-api"
 import type { ImportJob, SavedRow, Template } from "@/lib/types"
 
 export default async function TemplateRowsPage({
@@ -16,9 +18,18 @@ export default async function TemplateRowsPage({
 }: {
   params: Promise<{ templateId: string }>
 }) {
-  await requireCurrentUser()
-
   const { templateId } = await params
+
+  return (
+    <AppShell title="Template" description="Saved rows using this template, formatted for review and editing.">
+      <Suspense fallback={<TableWorkspaceSkeleton />}>
+        <TemplateRowsContent templateId={templateId} />
+      </Suspense>
+    </AppShell>
+  )
+}
+
+async function TemplateRowsContent({ templateId }: { templateId: string }) {
   const [{ template }, { imports }] = await Promise.all([
     serverFetch<{ template: Template | null }>(`/templates/${templateId}`),
     serverFetch<{ imports: ImportJob[] }>("/imports"),
@@ -50,11 +61,15 @@ export default async function TemplateRowsPage({
   }
 
   return (
-    <AppShell
-      title={template.name}
-      description="Saved rows using this template, formatted for review and editing."
-      actions={<TemplateTableActions rows={rows} template={template} />}
-    >
+    <>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <h2 className="text-lg font-semibold tracking-normal">{template.name}</h2>
+          <p className="text-sm text-muted-foreground">Saved rows using this template, formatted for review and editing.</p>
+        </div>
+        <TemplateTableActions rows={rows} template={template} />
+      </div>
+
       <div className="flex items-center justify-between gap-3">
         <Button
           variant="ghost"
@@ -82,6 +97,6 @@ export default async function TemplateRowsPage({
       ) : (
         <VirtualTable importId={templateImports[0].id} rows={rows} template={template} />
       )}
-    </AppShell>
+    </>
   )
 }

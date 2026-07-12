@@ -3,12 +3,11 @@ import { AppShell } from "@/components/app-shell"
 import { ImportStepLayout } from "@/components/import-step-layout"
 import { ProcessingCompletedPanel } from "@/components/processing-completed-panel"
 import { ProcessingStreamPanel } from "@/components/processing-stream-panel"
-import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import { serverFetch } from "@/lib/server-api"
 import type { ImportJob } from "@/lib/types"
 
 export default async function ProcessPage({ params }: { params: Promise<{ importId: string }> }) {
   const { importId } = await params
-  await requireCurrentUser()
 
   const data = await serverFetch<{ import: ImportJob }>(`/imports/${importId}`)
 

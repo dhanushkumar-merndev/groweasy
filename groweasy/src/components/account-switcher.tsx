@@ -327,8 +327,9 @@ export function AccountSwitcher({ user }: { user: CurrentUser }) {
                   {getInitials(user.name, user.email)}
                 </AvatarFallback>
               </Avatar>
-              <span className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-tight">
-                {user.name}
+              <span className="grid min-w-0 flex-1 text-left leading-tight">
+                <span className="truncate text-sm font-medium">{user.name}</span>
+                <span className="truncate text-xs text-muted-foreground">{user.email}</span>
               </span>
               <ChevronRightIcon className="ml-auto size-4 text-muted-foreground" />
             </DropdownMenuTrigger>

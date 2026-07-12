@@ -9,12 +9,11 @@ import { SaveReviewedRowsButton } from "@/components/save-reviewed-rows-button"
 import { StatusCountCards } from "@/components/status-count-cards"
 import { Button } from "@/components/ui/button"
 import { ArrowLeftIcon } from "lucide-react"
-import { requireCurrentUser, serverFetch } from "@/lib/server-api"
+import { serverFetch } from "@/lib/server-api"
 import type { CleanedRow, ImportJob, Template } from "@/lib/types"
 
 export default async function ExportPage({ params }: { params: Promise<{ importId: string }> }) {
   const { importId } = await params
-  await requireCurrentUser()
 
   const importData = await serverFetch<{ import: ImportJob; template: Template | null; cleaned_rows: CleanedRow[] }>(
     `/imports/${importId}`

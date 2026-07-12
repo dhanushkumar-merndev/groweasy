@@ -150,6 +150,10 @@ create index idx_saved_rows_sheet_name on saved_rows(sheet_name);
 create index idx_saved_rows_cleaned_data_gin on saved_rows using gin(cleaned_data);
 create index idx_history_logs_import_id on history_logs(import_id);
 
+alter table "user" enable row level security;
+alter table session enable row level security;
+alter table account enable row level security;
+alter table verification enable row level security;
 alter table templates enable row level security;
 alter table imports enable row level security;
 alter table import_sheets enable row level security;

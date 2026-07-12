@@ -103,6 +103,10 @@ create index if not exists idx_saved_rows_sheet_name on saved_rows(sheet_name);
 create index if not exists idx_saved_rows_cleaned_data_gin on saved_rows using gin(cleaned_data);
 create index if not exists idx_history_logs_import_id on history_logs(import_id);
 
+alter table if exists "user" enable row level security;
+alter table if exists session enable row level security;
+alter table if exists account enable row level security;
+alter table if exists verification enable row level security;
 alter table templates enable row level security;
 alter table imports enable row level security;
 alter table import_sheets enable row level security;

@@ -3,7 +3,7 @@ import { fromNodeHeaders } from "better-auth/node"
 import { createHash } from "node:crypto"
 
 import { auth, isAuthConfigured } from "../server/auth/auth.js"
-import { demoUserId } from "../lib/data/sample-data.js"
+import { systemUserId } from "../lib/default-template.js"
 import { logger } from "../lib/logger.js"
 import { AUTH_USER_CACHE_TTL_SECONDS, authUserCacheKey, getCache, setCache } from "../server/redis/cache.js"
 
@@ -19,7 +19,7 @@ export async function requireCurrentUser(req: Request): Promise<CurrentUser> {
   if (!isAuthConfigured()) {
     logger.info("Auth not configured, using demo user")
     return {
-      id: demoUserId,
+      id: systemUserId,
       name: "Demo User",
       email: "demo@groweasy.local",
       image: null,

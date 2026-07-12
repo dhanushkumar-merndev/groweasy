@@ -207,7 +207,7 @@ src/
     ├── types.ts             # Shared TypeScript types
     ├── formatting.ts        # Column formatting rules
     └── data/
-        └── sample-data.ts   # Demo template + data
+        └── default-template.ts   # System CRM template
 ```
 
 ## AI Pipeline
