@@ -65,6 +65,18 @@ export const auth = betterAuth({
     }),
   ],
   advanced: {
+    ipAddress: {
+      ipAddressHeaders: [
+        "cf-connecting-ip",
+        "x-real-ip",
+        "x-forwarded-for",
+      ],
+      trustedProxies: [
+        "loopback",
+        "linklocal",
+        "uniquelocal",
+      ],
+    },
     database: {
       generateId: "uuid",
     },
