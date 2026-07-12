@@ -3,7 +3,6 @@ import { z } from "zod"
 
 import { handleRouteError, jsonOk } from "../server/api.js"
 import { requireCurrentUser } from "../middleware/auth.js"
-import { store } from "../server/repositories/store.js"
 import { encrypt, decrypt } from "../lib/crypto.js"
 import { logger } from "../lib/logger.js"
 import { getSupabaseServiceClient } from "../server/db/supabase.js"
@@ -70,9 +69,6 @@ router.post("/apikey", async (req, res) => {
       encrypted_api_key: encrypted,
       use_user_api_key: true,
     })
-    const legacyEncrypted = encrypt(JSON.stringify({ provider, model, key: actualKey }))
-    store.setApiKey(user.id, legacyEncrypted)
-    store.setUseUserApiKey(user.id, true)
     logger.info({ userId: user.id, provider, model }, "API key saved")
     return jsonOk(res, { message: "API key saved" })
   } catch (error) {
@@ -87,7 +83,6 @@ router.delete("/apikey", async (req, res) => {
       encrypted_api_key: null,
       use_user_api_key: false,
     })
-    store.deleteApiKey(user.id)
     logger.info({ userId: user.id }, "API key removed")
     return jsonOk(res, { message: "API key removed" })
   } catch (error) {
@@ -100,7 +95,6 @@ router.post("/apikey/mode", async (req, res) => {
     const user = await requireCurrentUser(req)
     const { useUserApiKey } = apiKeyModeSchema.parse(req.body)
     await upsertUserAiSettings(user.id, { use_user_api_key: useUserApiKey })
-    store.setUseUserApiKey(user.id, useUserApiKey)
     return jsonOk(res, { useUserApiKey })
   } catch (error) {
     return handleRouteError(res, error)
@@ -122,19 +116,17 @@ router.get("/apikey", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const settings = await getDbUserAiSettings(user.id)
-    const legacyRaw = store.getApiKey(user.id)
-    const useUserApiKey = settings?.use_user_api_key ?? store.getUseUserApiKey(user.id)
-    if (!settings?.encrypted_api_key && !legacyRaw) {
+    const useUserApiKey = settings?.use_user_api_key ?? false
+    if (!settings?.encrypted_api_key) {
       return jsonOk(res, { hasKey: false, isActive: false, useUserApiKey })
     }
-    const legacyInfo = legacyRaw ? await getUserDecryptedKey(user.id) : null
-    const hasKey = Boolean(settings?.encrypted_api_key || legacyRaw)
+    const hasKey = Boolean(settings?.encrypted_api_key)
     return jsonOk(res, {
       hasKey,
       isActive: Boolean(hasKey && useUserApiKey),
       maskedKey: "********",
-      provider: normalizeSupportedProvider(settings?.provider ?? legacyInfo?.provider ?? "cloudflare"),
-      model: settings?.model ?? legacyInfo?.model ?? "@cf/google/gemma-4-26b-a4b-it",
+      provider: normalizeSupportedProvider(settings?.provider ?? "cloudflare"),
+      model: settings?.model ?? "@cf/google/gemma-4-26b-a4b-it",
       useUserApiKey,
     })
   } catch (error) {
@@ -182,7 +174,6 @@ router.post("/ai", async (req, res) => {
       batch_size: settings.batchSize,
       request_batch_size: settings.requestBatchSize,
     })
-    store.setAiSettings(user.id, settings)
     return jsonOk(res, {
       settings: await getUserAiSettings(user.id),
       limits: AI_BATCH_LIMITS,
@@ -208,19 +199,12 @@ export async function getUserDecryptedKey(userId: string): Promise<{ provider: s
     }
   }
 
-  const encrypted = store.getApiKey(userId)
-  if (!encrypted) return null
-  try {
-    const decrypted = decrypt(encrypted)
-    return JSON.parse(decrypted)
-  } catch {
-    return null
-  }
+  return null
 }
 
 export async function shouldUseUserApiKey(userId: string) {
   const settings = await getDbUserAiSettings(userId)
-  return settings?.use_user_api_key ?? store.getUseUserApiKey(userId)
+  return settings?.use_user_api_key ?? false
 }
 
 export async function hasActiveUserApiKey(userId: string) {
@@ -322,10 +306,7 @@ export async function getUserAiSettings(userId: string): Promise<{ batchSize: nu
   const normalized = normalizeAiSettings(dbSettings?.batch_size && dbSettings?.request_batch_size ? {
     batchSize: dbSettings.batch_size,
     requestBatchSize: dbSettings.request_batch_size,
-  } : store.getAiSettings(userId) ?? {
-    batchSize: defaultSettings.batchSize,
-    requestBatchSize: defaultSettings.requestBatchSize,
-  }, defaultSettings)
+  } : defaultSettings, defaultSettings)
 
   return {
     ...normalized,

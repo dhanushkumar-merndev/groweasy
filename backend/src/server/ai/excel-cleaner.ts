@@ -227,7 +227,7 @@ export async function processImportRows(input: {
   }
 
   const summary = summarizeCleanedRows(allRows, input.sheets)
-  store.setCleanedRows(input.importId, allRows)
+  await store.setCleanedRows(input.importId, allRows)
   store.updateImport(input.userId, input.importId, {
     ...summary,
     status: "processed",
@@ -456,8 +456,9 @@ export async function getProcessedRows(importId: string, updatedAt?: string) {
     logger.debug({ importId }, "Returning cached processed rows")
     return cached
   }
-  logger.debug({ importId }, "Cache miss for processed rows, falling back to store")
-  return store.listCleanedRows(importId)
+  logger.debug({ importId }, "Cache miss for processed rows")
+  const rows = await getCache<CleanedRow[]>(cacheKeys(importId).formatted)
+  return rows ?? []
 }
 
 async function cleanWithGroq(input: {

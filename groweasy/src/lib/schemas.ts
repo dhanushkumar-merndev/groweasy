@@ -75,7 +75,7 @@ export const rawImportRowSchema = z.object({
   return {
     id: row.id ?? `${importId}_${sheetIndex}_${rowIndex}`,
     import_id: importId,
-    sheet_id: row.sheet_id ?? `${importId}_sheet_${sheetIndex + 1}`,
+    sheet_id: row.sheet_id ?? crypto.randomUUID(),
     sheet_name: sheetName,
     sheet_index: sheetIndex,
     row_index: rowIndex,

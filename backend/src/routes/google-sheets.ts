@@ -20,7 +20,7 @@ router.post("/export", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const body = parseJsonBody(req.body, googleSheetExportSchema)
-    const job = store.getImport(user.id, body.import_id)
+    const job = await store.getImport(user.id, body.import_id)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)

@@ -40,7 +40,7 @@ router.get("/:importId/rows", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { importId } = req.params
-    const job = store.getImport(user.id, importId)
+    const job = await store.getImport(user.id, importId)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
@@ -71,7 +71,7 @@ router.post("/:importId/rows", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { importId } = req.params
-    const job = store.getImport(user.id, importId)
+    const job = await store.getImport(user.id, importId)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
@@ -79,7 +79,7 @@ router.post("/:importId/rows", async (req, res) => {
 
     const body = parseJsonBody(req.body, appendRowSchema)
     logger.info({ userId: user.id, importId }, "Appending row")
-    const row = store.appendSavedRow(user.id, importId, body)
+    const row = await store.appendSavedRow(user.id, importId, body)
     await store.addHistory(user.id, importId, "rows_added", { row_id: row.id })
     await invalidateUserListCaches(user.id)
 
@@ -93,7 +93,7 @@ router.patch("/:importId/rows/:rowId", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { importId, rowId } = req.params
-    const job = store.getImport(user.id, importId)
+    const job = await store.getImport(user.id, importId)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
@@ -118,7 +118,7 @@ router.delete("/:importId/rows/:rowId", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { importId, rowId } = req.params
-    const job = store.getImport(user.id, importId)
+    const job = await store.getImport(user.id, importId)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)

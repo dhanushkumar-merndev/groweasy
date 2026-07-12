@@ -31,9 +31,7 @@ export function normalizeLocalValidationRows(importId: string, rows: RawImportRo
     const sheetIndex = typeof legacyRow.sheet_index === "number" ? legacyRow.sheet_index : legacyRow.source_sheet_index ?? 0
     const rowIndex = typeof legacyRow.row_index === "number" ? legacyRow.row_index : legacyRow.source_row_index ?? index + 1
     const sheetName = legacyRow.sheet_name ?? legacyRow.source_sheet ?? "Upload"
-    const sheetId = legacyRow.sheet_id?.startsWith("_sheet_")
-      ? `${importId}_sheet_${sheetIndex + 1}`
-      : legacyRow.sheet_id ?? `${importId}_sheet_${sheetIndex + 1}`
+    const sheetId = legacyRow.sheet_id ?? crypto.randomUUID()
 
     return {
       ...legacyRow,

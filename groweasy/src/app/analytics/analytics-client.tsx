@@ -113,41 +113,60 @@ export function AnalyticsClient() {
     </Card>
   ) : (
     <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {templateSummaries.map((summary) => (
-        <Card key={summary.template.id} className="h-fit py-0">
-          <div className="grid gap-4 p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="grid gap-1">
-                <CardTitle className="text-lg">{summary.template.name}</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  {summary.lastUpdated
-                    ? `Updated ${DATE_FORMATTER.format(new Date(summary.lastUpdated))}`
-                    : "No saved rows yet"}
-                </p>
+      {templateSummaries.map((summary) => {
+        const hasSavedRows = summary.savedRows > 0
+
+        return (
+          <Card key={summary.template.id} className="h-fit py-0">
+            <div className="grid gap-4 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="grid gap-1">
+                  <CardTitle className="text-lg">{summary.template.name}</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    {summary.lastUpdated
+                      ? `Updated ${DATE_FORMATTER.format(new Date(summary.lastUpdated))}`
+                      : "No saved rows yet"}
+                  </p>
+                </div>
+                <Badge variant="outline">
+                  <BarChart3Icon className="size-3.5" />
+                  Template
+                </Badge>
               </div>
-              <Badge variant="outline">
-                <BarChart3Icon className="size-3.5" />
-                Template
-              </Badge>
+              <div className="grid grid-cols-3 gap-2">
+                <TemplateMetric icon={<Rows3Icon />} label="Saved" value={summary.savedRows} />
+                <TemplateMetric icon={<Table2Icon />} label="Imports" value={summary.imports} />
+                <TemplateMetric icon={<BarChart3Icon />} label="Fields" value={summary.fields} />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {hasSavedRows ? (
+                  <>
+                    <Button render={<Link href={`/analytics/${summary.template.id}?mode=ai`} />}>
+                      <SparklesIcon />
+                      AI Generate
+                    </Button>
+                    <Button variant="outline" render={<Link href={`/analytics/${summary.template.id}?mode=default`} />}>
+                      Default
+                      <ArrowRightIcon />
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button disabled>
+                      <SparklesIcon />
+                      AI Generate
+                    </Button>
+                    <Button disabled variant="outline">
+                      Default
+                      <ArrowRightIcon />
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              <TemplateMetric icon={<Rows3Icon />} label="Saved" value={summary.savedRows} />
-              <TemplateMetric icon={<Table2Icon />} label="Imports" value={summary.imports} />
-              <TemplateMetric icon={<BarChart3Icon />} label="Fields" value={summary.fields} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Button render={<Link href={`/analytics/${summary.template.id}?mode=ai`} />}>
-                <SparklesIcon />
-                AI Generate
-              </Button>
-              <Button variant="outline" render={<Link href={`/analytics/${summary.template.id}?mode=default`} />}>
-                Default
-                <ArrowRightIcon />
-              </Button>
-            </div>
-          </div>
-        </Card>
-      ))}
+          </Card>
+        )
+      })}
     </div>
   )
 }

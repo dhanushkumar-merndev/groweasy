@@ -85,7 +85,7 @@ function buildValidationResult(
   }
 
   sheetInputs.forEach((sheet, sheetIndex) => {
-    const sheetId = `${options.importId}_sheet_${sheetIndex + 1}`
+    const sheetId = crypto.randomUUID()
     const matrix = sheet.matrix
 
     if (sheet.state && sheet.state !== "visible") {

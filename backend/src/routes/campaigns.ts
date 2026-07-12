@@ -35,7 +35,7 @@ router.post("/", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { name } = z.object({ name: z.string().min(1).max(100) }).parse(req.body)
-    const campaign = store.createCampaign(user.id, name)
+    const campaign = await store.createCampaign(user.id, name)
     await invalidateUserListCaches(user.id)
     return jsonOk(res, { campaign }, 201)
   } catch (error) {
@@ -47,7 +47,7 @@ router.delete("/:campaignId", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { campaignId } = req.params
-    store.deleteCampaign(user.id, campaignId)
+    await store.deleteCampaign(user.id, campaignId)
     await invalidateUserListCaches(user.id)
     return jsonOk(res, { deleted: true })
   } catch (error) {
@@ -60,7 +60,7 @@ router.post("/:campaignId/rows", async (req, res) => {
     const user = await requireCurrentUser(req)
     const { campaignId } = req.params
     const { rowId } = z.object({ rowId: z.string().uuid() }).parse(req.body)
-    const ok = store.addRowToCampaign(user.id, campaignId, rowId)
+    const ok = await store.addRowToCampaign(user.id, campaignId, rowId)
     if (!ok) return jsonError(res, "CAMPAIGN_NOT_FOUND", "Campaign not found.", 404)
     await invalidateUserListCaches(user.id)
     return jsonOk(res, { added: true })
@@ -73,7 +73,7 @@ router.delete("/:campaignId/rows/:rowId", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { campaignId, rowId } = req.params
-    const ok = store.removeRowFromCampaign(user.id, campaignId, rowId)
+    const ok = await store.removeRowFromCampaign(user.id, campaignId, rowId)
     if (!ok) return jsonError(res, "CAMPAIGN_NOT_FOUND", "Campaign not found.", 404)
     await invalidateUserListCaches(user.id)
     return jsonOk(res, { removed: true })

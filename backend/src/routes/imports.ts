@@ -91,7 +91,7 @@ router.post("/", upload.single("file"), async (req, res) => {
       return jsonError(res, "DEFAULT_API_ROW_LIMIT", getDefaultApiRowLimitMessage(validation.rows.length), 403)
     }
 
-    const job = store.createImport(user.id, {
+    const job = await store.createImport(user.id, {
       id: importId,
       templateId: template.id,
       fileName: req.file!.originalname,
@@ -148,7 +148,7 @@ router.post("/batch", async (req, res) => {
       return {
         id: row.id || `${importId}_${sheetIndex}_${rowIndex}`,
         import_id: importId,
-        sheet_id: row.sheet_id || `${importId}_sheet_${sheetIndex + 1}`,
+        sheet_id: row.sheet_id || crypto.randomUUID(),
         sheet_name: sheetName,
         sheet_index: sheetIndex,
         row_index: rowIndex,
@@ -160,7 +160,7 @@ router.post("/batch", async (req, res) => {
     }
 
     const mappedSheets: ImportSheet[] = sheets.map((sheet: any, idx: number) => ({
-      id: sheet.id || `${importId}_sheet_${typeof sheet.sheet_index === "number" ? sheet.sheet_index + 1 : idx + 1}`,
+      id: sheet.id || crypto.randomUUID(),
       import_id: importId,
       sheet_name: sheet.sheet_name || sheet.name || `Sheet ${idx + 1}`,
       sheet_index: typeof sheet.sheet_index === "number" ? sheet.sheet_index : idx,
@@ -171,7 +171,7 @@ router.post("/batch", async (req, res) => {
       created_at: new Date().toISOString(),
     }))
 
-    const existingJob = store.getImport(user.id, importId)
+    const existingJob = await store.getImport(user.id, importId)
 
     if (existingJob) {
       logger.info({ userId: user.id, importId }, "Import already exists, updating cache")
@@ -209,7 +209,7 @@ router.post("/batch", async (req, res) => {
       })
     }
 
-    const job = store.createImport(user.id, {
+    const job = await store.createImport(user.id, {
       id: importId,
       templateId,
       fileName,
@@ -252,7 +252,7 @@ router.get("/:id", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { id } = req.params
-    const job = store.getImport(user.id, id)
+    const job = await store.getImport(user.id, id)
 
     if (!job) {
       logger.warn({ userId: user.id, importId: id }, "Import not found")
@@ -264,7 +264,7 @@ router.get("/:id", async (req, res) => {
     return jsonOk(res, {
       import: job,
       template: await store.getTemplateForUser(user.id, job.template_id),
-      sheets: store.listSheets(id),
+      sheets: await store.listSheets(id),
       validation,
       cleaned_rows: store.listCleanedRows(id),
       saved_rows: await store.listSavedRows(user.id, id),
@@ -278,7 +278,7 @@ router.post("/:id/validate", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { id } = req.params
-    const job = store.getImport(user.id, id)
+    const job = await store.getImport(user.id, id)
 
     if (!job) {
       logger.warn({ userId: user.id, importId: id }, "Import not found for validation")
@@ -296,7 +296,7 @@ router.post("/:id/validate", async (req, res) => {
     const rows = body.rows?.map((row) => ({
       ...row,
       import_id: id,
-      sheet_id: row.sheet_id.startsWith("_sheet_") ? `${id}_sheet_${row.sheet_index + 1}` : row.sheet_id,
+      sheet_id: row.sheet_id,
     })) ?? validation.rows
     const blankRowsRemoved = body.rows ? body.blank_rows_removed : validation.blank_rows_removed
     const removeBlankRows = body.rows ? body.remove_blank_rows : validation.remove_blank_rows
@@ -324,8 +324,8 @@ router.post("/:id/validate", async (req, res) => {
       correct_spelling: correctSpelling,
     }
 
-    store.setSheets(id, sheets)
-    store.updateImport(user.id, id, {
+    await store.setSheets(id, sheets)
+    await store.updateImport(user.id, id, {
       status: "validated",
       total_rows: rows.length,
       blank_rows_removed: blankRowsRemoved,
@@ -418,7 +418,7 @@ router.post("/:id/process", async (req, res) => {
     const user = await requireCurrentUser(req)
     const { id } = req.params
     const body = parseJsonBody(req.body, processImportSchema)
-    const job = store.getImport(user.id, id)
+    const job = await store.getImport(user.id, id)
 
     if (!job) {
       logger.warn({ userId: user.id, importId: id }, "Import not found for processing")
@@ -450,13 +450,13 @@ router.post("/:id/process", async (req, res) => {
 
     let result: Awaited<ReturnType<typeof processImportRows>>
     try {
-      store.setStatus(user.id, id, "processing")
+      await store.setStatus(user.id, id, "processing")
       result = await processImportRows({
         userId: user.id,
         importId: id,
         template,
         rows,
-        sheets: store.listSheets(id),
+        sheets: await store.listSheets(id),
         requireBothEmailPhone: validation?.require_both_email_phone ?? false,
         generateDescription: validation?.generate_description ?? false,
         correctSpelling: validation?.correct_spelling ?? false,
@@ -488,7 +488,7 @@ router.get("/:id/stream", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { id } = req.params
-    const job = store.getImport(user.id, id)
+    const job = await store.getImport(user.id, id)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
@@ -531,7 +531,7 @@ router.get("/:id/stream", async (req, res) => {
     res.socket?.setNoDelay(true)
     writeSse(res, { type: "connected" })
 
-    store.setStatus(user.id, id, "processing")
+    await store.setStatus(user.id, id, "processing")
 
     let goodCount = 0
     let missingCount = 0
@@ -555,7 +555,7 @@ router.get("/:id/stream", async (req, res) => {
         importId: id,
         template,
         rows,
-        sheets: store.listSheets(id),
+        sheets: await store.listSheets(id),
         requireBothEmailPhone: validation?.require_both_email_phone ?? false,
         generateDescription: validation?.generate_description ?? false,
         correctSpelling: validation?.correct_spelling ?? false,
@@ -694,7 +694,7 @@ router.get("/:id/results", async (req, res) => {
   try {
     const user = await requireCurrentUser(req)
     const { id } = req.params
-    const job = store.getImport(user.id, id)
+    const job = await store.getImport(user.id, id)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
@@ -714,7 +714,7 @@ router.post("/:id/save", async (req, res) => {
     const user = await requireCurrentUser(req)
     const { id } = req.params
     const body = parseJsonBody(req.body, saveImportSchema)
-    const job = store.getImport(user.id, id)
+    const job = await store.getImport(user.id, id)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
@@ -724,7 +724,7 @@ router.post("/:id/save", async (req, res) => {
     const selectedRows = body.row_ids ? rows.filter((row) => body.row_ids?.includes(row.id)) : rows
     const savedRows = await store.saveGoodRows(user.id, id, selectedRows)
 
-    store.updateImport(user.id, id, {
+    await store.updateImport(user.id, id, {
       status: "saved",
       final_saved_count: savedRows.length,
       fixed_missing_count: selectedRows.filter((row) => row.status === "good" && row.missing_fields.length > 0).length,
@@ -743,7 +743,7 @@ router.post("/:id/export/excel", async (req, res) => {
     const user = await requireCurrentUser(req)
     const { id } = req.params
     const body = parseJsonBody(req.body, exportExcelSchema)
-    const job = store.getImport(user.id, id)
+    const job = await store.getImport(user.id, id)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)
@@ -758,7 +758,7 @@ router.post("/:id/export/excel", async (req, res) => {
     let rows = await store.listSavedRows(user.id, id)
 
     if (rows.length === 0) {
-      rows = store.listCleanedRows(id).map((row) => ({
+      rows = (await store.listCleanedRows(id)).map((row) => ({
         id: row.id,
         user_id: user.id,
         import_id: id,
@@ -803,7 +803,7 @@ router.post("/:id/export/google-sheet", async (req, res) => {
     const user = await requireCurrentUser(req)
     const { id } = req.params
     const body = parseJsonBody(req.body, googleSheetExportSchema)
-    const job = store.getImport(user.id, id)
+    const job = await store.getImport(user.id, id)
 
     if (!job) {
       return jsonError(res, "IMPORT_NOT_FOUND", "Import not found.", 404)

@@ -119,6 +119,23 @@ create policy "Users manage own templates" on templates
   using (auth.uid()::text = user_id)
   with check (auth.uid()::text = user_id);
 
+create table if not exists campaigns (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null,
+  name text not null,
+  row_ids jsonb default '[]'::jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_campaigns_user_id on campaigns(user_id);
+
+alter table campaigns enable row level security;
+
+create policy "Users manage own campaigns" on campaigns
+  using (auth.uid()::text = user_id)
+  with check (auth.uid()::text = user_id);
+
 create policy "Users manage own imports" on imports
   using (auth.uid()::text = user_id)
   with check (auth.uid()::text = user_id);

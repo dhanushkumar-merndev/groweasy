@@ -91,23 +91,34 @@ export function CampaignsClient() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {templateSummaries.map((summary) => (
-              <TableRow key={summary.template.id}>
-                <TableCell className="font-medium">{summary.template.name}</TableCell>
-                <TableCell className="text-muted-foreground tabular-nums">{summary.savedRows}</TableCell>
-                <TableCell className="text-muted-foreground tabular-nums">{summary.imports}</TableCell>
-                <TableCell className="text-muted-foreground tabular-nums">{summary.fields}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {summary.lastUpdated ? new Date(summary.lastUpdated).toLocaleDateString() : "No saved rows yet"}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button size="sm" variant="outline" render={<Link href={`/campaigns/${summary.template.id}`} />}>
-                    View table
-                    <Table2Icon />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
+            {templateSummaries.map((summary) => {
+              const hasSavedRows = summary.savedRows > 0
+
+              return (
+                <TableRow key={summary.template.id}>
+                  <TableCell className="font-medium">{summary.template.name}</TableCell>
+                  <TableCell className="text-muted-foreground tabular-nums">{summary.savedRows}</TableCell>
+                  <TableCell className="text-muted-foreground tabular-nums">{summary.imports}</TableCell>
+                  <TableCell className="text-muted-foreground tabular-nums">{summary.fields}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {summary.lastUpdated ? new Date(summary.lastUpdated).toLocaleDateString() : "No saved rows yet"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {hasSavedRows ? (
+                      <Button size="sm" variant="outline" render={<Link href={`/campaigns/${summary.template.id}`} />}>
+                        View table
+                        <Table2Icon />
+                      </Button>
+                    ) : (
+                      <Button disabled size="sm" variant="outline">
+                        View table
+                        <Table2Icon />
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
           </TableBody>
         </Table>
       </CardContent>

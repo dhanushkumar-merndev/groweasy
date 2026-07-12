@@ -223,6 +223,16 @@ export type HistoryLog = {
   created_at: string
 }
 
+/** Named group of saved rows for bulk operations. Row IDs stored as jsonb. */
+export type Campaign = {
+  id: string
+  user_id: string
+  name: string
+  rowIds: string[]
+  created_at: string
+  updated_at: string
+}
+
 export type ChartType =
   | "line"
   | "bar"
